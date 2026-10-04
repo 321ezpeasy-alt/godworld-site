@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Universal AI API Key</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.3.1",
+          "react-dom": "https://esm.sh/react-dom@18.3.1",
+          "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+          "scheduler": "https://esm.sh/scheduler@0.23.2"
+        }
+      }
+    </script>
+    <script type="module" crossorigin src="/keys-app/assets/index-e1TtVJ6R.js"></script>
+    <link rel="stylesheet" crossorigin href="/keys-app/assets/index-CiTwlys8.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Runtime broker URL. Hosting can override without rebuilding.
+         Falls back to config.json, then the shipped default. -->
+    <script>
+      window.__BROKER_URL__ = "https://broker.godworld.org";
+    </script>
+    <!-- React via pinned CDN (exact versions, no drift). The app bundle
+         imports bare specifiers; this map resolves them at runtime. -->
+
+  </body>
+</html>
