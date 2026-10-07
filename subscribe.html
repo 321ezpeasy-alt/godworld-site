@@ -13,16 +13,11 @@
   .sub{color:var(--dim);font-size:17px;margin:0 0 40px;line-height:1.6}
   .back{font-size:14px;margin-bottom:24px}
   a{color:var(--acc)}
-  .tiers{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin:0 0 48px}
-  .tier{border:1px solid #21262d;border-radius:12px;padding:28px;background:#0d1117}
-  .tier h2{margin:0 0 4px;font-size:22px}
-  .tier .price{font-size:34px;font-weight:800;margin:12px 0 4px}
-  .tier .per{color:var(--dim);font-size:14px;margin:0 0 16px}
-  .tier ul{margin:0 0 24px;padding-left:20px;color:#c9d1d9;font-size:15px;line-height:1.7}
   .buy{display:inline-block;padding:14px 28px;background:var(--acc);color:#04101f;
     font-weight:700;border-radius:8px;text-decoration:none}
   .buy:hover{filter:brightness(1.1)}
   .soon{border:1px dashed #30363d;border-radius:12px;padding:28px;margin:0 0 16px;background:#0d1117}
+  .soon.solid{border-style:solid}
   .soon h2{margin:0 0 8px;font-size:22px}
   .soon p{margin:0 0 16px;color:var(--dim);font-size:15px;line-height:1.6}
   .note{color:var(--dim);font-size:13px;margin-top:32px;line-height:1.6}
@@ -32,44 +27,12 @@
 <div class="wrap">
   <p class="back"><a href="/">← godworld.org</a></p>
   <h1>Subscribe</h1>
-  <p class="sub">Software, priced straight. No sales calls, no pilot theater — click, pay, build. Secure checkout through Stripe.</p>
+  <p class="sub">Software, priced straight. No sales calls, no pilot theater.</p>
 
-  <div class="tiers">
-    <div class="tier">
-      <h2>EZPEASY Tier 1</h2>
-      <p class="price">$250</p>
-      <p class="per">per month, recurring</p>
-      <ul>
-        <li>Cardio liveness verification API</li>
-        <li>5,000 verifications included monthly</li>
-        <li>$0.06 per verification overage</li>
-        <li>Cancel anytime</li>
-      </ul>
-      <a class="buy" href="https://buy.stripe.com/3cI4gyh2QfYGd0jaOIdUY01">Subscribe — $250/mo</a>
-    </div>
-    <div class="tier">
-      <h2>EZPEASY Tier 1 Annual</h2>
-      <p class="price">$2,500</p>
-      <p class="per">per year, recurring</p>
-      <ul>
-        <li>Everything in Tier 1</li>
-        <li>Two months free vs monthly</li>
-        <li>Priority support</li>
-        <li>Cancel anytime</li>
-      </ul>
-      <a class="buy" href="https://buy.stripe.com/eVqeVc3c05k28K36ysdUY02">Subscribe — $2,500/yr</a>
-    </div>
-    <div class="tier">
-      <h2>EZPEASY Pilot</h2>
-      <p class="price">$15,000</p>
-      <p class="per">one-time</p>
-      <ul>
-        <li>Guided production pilot</li>
-        <li>Integration with your identity stack</li>
-        <li>Direct line to the builder (me)</li>
-      </ul>
-      <a class="buy" href="https://buy.stripe.com/5kQ00iaEs4fYf8rbSMdUY00">Buy the Pilot — $15,000</a>
-    </div>
+  <div class="soon solid">
+    <h2>EZPEASY — per verification</h2>
+    <p>One flat price per scan, metered monthly. No subscriptions, no tiers, no caps, no overages — every verification earns its keep. Final numbers drop soon.</p>
+    <a class="buy" href="mailto:henry@godworld.org?subject=EZPEASY%20pilot%20inquiry">Pilot inquiries welcome</a>
   </div>
 
   <div class="soon">
@@ -83,7 +46,7 @@
     <a class="buy" href="/keys.html">See how the key works</a>
   </div>
 
-  <p class="note">Payments processed by Stripe. Subscriptions renew automatically until cancelled. Every dollar goes to one builder in Cape Girardeau, Missouri — no venture capital, no middlemen.</p>
+  <p class="note">Every dollar goes to one builder in Cape Girardeau, Missouri — no venture capital, no middlemen.</p>
 </div>
 </body>
 </html>
