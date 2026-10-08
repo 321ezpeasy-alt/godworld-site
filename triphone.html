@@ -336,7 +336,7 @@
         </div>
         <div class="codebox">
           <h3>Get your seller code</h3>
-          <p>Enter the PayPal email where your $100 payouts should land. Your code is generated from it — same email, same code, forever.</p>
+          <p>Enter the Enter the PayPal-linked email where your $100 payouts should land (must be linked to a PayPal account)</p>
           <form id="seller-form">
             <input type="email" id="seller-email" placeholder="you@example.com" required autocomplete="email" aria-label="PayPal email">
             <button type="submit" class="buy" style="border:none;cursor:pointer">Get my seller code</button>
@@ -427,10 +427,10 @@
     overlay.innerHTML =
       '<div class="refer-card" role="dialog" aria-modal="true" aria-label="Before checkout">' +
       '<h3>Almost there.</h3>' +
-      '<p>Buying with a friend&apos;s seller code earns <strong>them</strong> $100. Your PayPal email registers <strong>your</strong> payouts.</p>' +
+      '<p>Buying with a friend&apos;s seller code earns <strong>them</strong> $100. Your A PayPal-linked email registers <strong>your</strong> payouts — that is where the $100 lands.</p>' +
       '<label for="rc-code">Seller code (optional)</label>' +
       '<input id="rc-code" placeholder="A8-XXXXXX" autocomplete="off" spellcheck="false">' +
-      '<label for="rc-paypal">Your PayPal email for $100 payouts</label>' +
+      '<label for="rc-paypal">Your PayPal-linked email — your $100 goes here</label>' +
       '<input id="rc-paypal" type="email" placeholder="you@example.com" autocomplete="email">' +
       '<p class="err" id="rc-err"></p>' +
       '<div class="row">' +
