@@ -72,7 +72,7 @@
     }
     .hero-media { position: absolute; inset: 0; }
     .hero-media img {
-      width: 100%; height: 100%; object-fit: cover; object-position: center 20%;
+      width: 100%; height: 100%; object-fit: contain; object-position: center;
       filter: saturate(.92) contrast(1.04);
     }
     .hero-media::after {
@@ -230,7 +230,7 @@
 <body>
   <main>
     <section class="hero" aria-labelledby="hero-title">
-      <div class="hero-media"><img src="archangel-logo.png" alt="ARCHANGEL 8 — Studio Dev Lab" /></div>
+      <div class="hero-media"><img src="archangel-hero.png" alt="ARCHANGEL 8 — Studio Dev Lab" /></div>
       <div class="shell hero-inner">
         <div class="edition">ARCHANGEL 8 · TriPhone Studio Dev Lab</div>
         <h1 id="hero-title">Solutions in the palm<br />of your hand.</h1>
