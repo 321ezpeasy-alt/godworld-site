@@ -200,7 +200,27 @@
       html { scroll-behavior: auto; }
       .buy { transition: none; }
     }
-  h1,h2{background:linear-gradient(100deg,#d92d20 10%,#f79009 55%,#eab308 100%);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}.hero h1,.hero h2{background:none;color:var(--hero-text);-webkit-text-fill-color:var(--hero-text)}</style>
+  h1,h2{background:linear-gradient(100deg,#d92d20 10%,#f79009 55%,#eab308 100%);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}.hero h1,.hero h2{background:none;color:var(--hero-text);-webkit-text-fill-color:var(--hero-text)}
+    .refer { background: var(--surface); border-top: 1px solid var(--line); }
+    .codebox { margin-top: 56px; border: 1px solid var(--line); border-radius: 12px; padding: 40px; background: var(--surface-2); max-width: 720px; }
+    .codebox h3 { margin: 0 0 8px; font-size: 24px; letter-spacing: -.02em; }
+    .codebox p { color: var(--muted); margin: 0; font-size: 16px; line-height: 1.6; }
+    .codebox form { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+    .codebox input[type=email] { flex: 1; min-width: 240px; min-height: 56px; padding: 0 16px; border: 1px solid var(--line); border-radius: 4px; font-size: 16px; background: #fff; color: var(--text); }
+    .code-out { margin-top: 20px; font-size: 20px; color: var(--text); }
+    .code-out strong { font-size: 30px; letter-spacing: .08em; color: var(--accent); }
+    .codebox .fine { font-size: 14px; color: var(--muted); }
+    .refer-modal { position: fixed; inset: 0; background: rgba(16,18,22,.62); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+    .refer-modal[hidden] { display: none; }
+    .refer-card { background: #fff; color: var(--text); border-radius: 12px; padding: 36px; max-width: 480px; width: 100%; box-shadow: var(--shadow); }
+    .refer-card h3 { margin: 0 0 8px; font-size: 22px; letter-spacing: -.02em; }
+    .refer-card p { color: var(--muted); font-size: 15px; margin: 0; line-height: 1.55; }
+    .refer-card label { display: block; margin-top: 16px; font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--text); }
+    .refer-card input { width: 100%; min-height: 52px; margin-top: 6px; padding: 0 14px; border: 1px solid var(--line); border-radius: 4px; font-size: 16px; box-sizing: border-box; background: #fff; color: var(--text); }
+    .refer-card .err { color: var(--accent); font-size: 14px; min-height: 20px; margin: 8px 0 0; }
+    .refer-card .row { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+    .refer-card .ghost { background: none; border: 1px solid var(--line); color: var(--text); border-radius: 4px; min-height: 52px; padding: 0 20px; font-weight: 700; font-size: 15px; cursor: pointer; }
+</style>
 </head>
 <body>
   <main>
@@ -281,6 +301,41 @@
       </div>
     </section>
 
+    <section class="refer" aria-labelledby="refer-title">
+      <div class="shell">
+        <div class="workflow-head">
+          <div>
+            <span class="section-number">04 / THE RECURSIVE LOOP</span>
+            <h2 id="refer-title">Your phone pays you <em>$100</em> every time someone buys one because they saw yours.</h2>
+          </div>
+          <p class="section-copy">Every owner is a store. Every screen is the storefront. Every sale creates a new store — the reward kickstarts the next cycle.</p>
+        </div>
+        <div class="steps">
+          <article class="step">
+            <h3>Buy</h3>
+            <p>$750. Your personal seller code activates the moment your purchase completes — you&apos;re a seller from minute one.</p>
+          </article>
+          <article class="step">
+            <h3>Display</h3>
+            <p>Your code lives on the wallpaper QR. The product is the storefront: the avatars draw the eyes, the code closes the sale.</p>
+          </article>
+          <article class="step">
+            <h3>Get paid</h3>
+            <p>$100 hits your PayPal the instant their purchase verifies. Eight sales and the phone was free.</p>
+          </article>
+        </div>
+        <div class="codebox">
+          <h3>Get your seller code</h3>
+          <p>Enter the PayPal email where your $100 payouts should land. Your code is generated from it — same email, same code, forever.</p>
+          <form id="seller-form">
+            <input type="email" id="seller-email" placeholder="you@example.com" required autocomplete="email" aria-label="PayPal email">
+            <button type="submit" class="buy" style="border:none;cursor:pointer">Get my seller code</button>
+          </form>
+          <p class="code-out" id="seller-code-out" hidden>Your seller code: <strong id="seller-code"></strong><br><span class="fine">Save it. Everyone who buys with this code earns you $100.</span></p>
+        </div>
+      </div>
+    </section>
+
     <section class="final" aria-labelledby="final-title">
       <div class="shell final-grid">
         <div>
@@ -305,5 +360,85 @@
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </a>
   </div>
+<script>
+(function () {
+  "use strict";
+  var LEDGER_URL = "/api/referrals/attribution"; /* posts when the ledger exists; fails silent on static hosting */
+  var CODE_RE = /^A8-[A-Z2-9]{6}$/;
+  var GLYPHS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+  function sellerCode(email) {
+    var clean = String(email).trim().toLowerCase();
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode("archangel8:" + clean)).then(function (buf) {
+      var bytes = new Uint8Array(buf), out = "", acc = 0, bits = 0, i = 0;
+      while (out.length < 6) {
+        acc = (acc << 8) | bytes[i++ % bytes.length]; bits += 8;
+        while (bits >= 5 && out.length < 6) { bits -= 5; out += GLYPHS[(acc >> bits) & 31]; }
+      }
+      return "A8-" + out;
+    });
+  }
+
+  function store(key, obj) { try { localStorage.setItem(key, JSON.stringify(obj)); } catch (e) {} }
+  function postLedger(data) {
+    try {
+      fetch(LEDGER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }).catch(function () {});
+    } catch (e) {}
+  }
+
+  /* seller code generator */
+  var form = document.getElementById("seller-form");
+  if (form) form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var email = document.getElementById("seller-email").value;
+    sellerCode(email).then(function (code) {
+      document.getElementById("seller-code").textContent = code;
+      document.getElementById("seller-code-out").hidden = false;
+      store("a8_seller", { email: email, code: code, ts: new Date().toISOString() });
+      postLedger({ type: "seller_register", paypal_email: email, code: code });
+    });
+  });
+
+  /* pre-checkout capture on buy buttons */
+  function openCheckout(href) {
+    var overlay = document.createElement("div");
+    overlay.className = "refer-modal";
+    overlay.innerHTML =
+      '<div class="refer-card" role="dialog" aria-modal="true" aria-label="Before checkout">' +
+      '<h3>Almost there.</h3>' +
+      '<p>Buying with a friend&apos;s seller code earns <strong>them</strong> $100. Your PayPal email registers <strong>your</strong> payouts.</p>' +
+      '<label for="rc-code">Seller code (optional)</label>' +
+      '<input id="rc-code" placeholder="A8-XXXXXX" autocomplete="off" spellcheck="false">' +
+      '<label for="rc-paypal">Your PayPal email for $100 payouts</label>' +
+      '<input id="rc-paypal" type="email" placeholder="you@example.com" autocomplete="email">' +
+      '<p class="err" id="rc-err"></p>' +
+      '<div class="row">' +
+      '<button class="buy" id="rc-go" style="border:none;cursor:pointer">Continue to checkout</button>' +
+      '<button class="ghost" id="rc-skip">No code &mdash; continue</button>' +
+      '</div></div>';
+    document.body.appendChild(overlay);
+    var codeInput = overlay.querySelector("#rc-code"), paypalInput = overlay.querySelector("#rc-paypal");
+    function close() { overlay.remove(); }
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
+    function go(withData) {
+      if (withData) {
+        var code = codeInput.value.trim().toUpperCase();
+        if (code && !CODE_RE.test(code)) { overlay.querySelector("#rc-err").textContent = "That code doesn’t look right — it looks like A8-XXXXXX."; return; }
+        var data = { type: "attribution", referral_code: code || null, paypal_email: paypalInput.value.trim() || null, ts: new Date().toISOString() };
+        store("a8_attribution", data);
+        postLedger(data);
+      }
+      close();
+      window.open(href, "_blank", "noopener");
+    }
+    overlay.querySelector("#rc-go").addEventListener("click", function () { go(true); });
+    overlay.querySelector("#rc-skip").addEventListener("click", function () { go(false); });
+  }
+
+  document.querySelectorAll('a.buy[href*="square.link"]').forEach(function (a) {
+    a.addEventListener("click", function (e) { e.preventDefault(); openCheckout(a.href); });
+  });
+})();
+</script>
 </body>
 </html>
