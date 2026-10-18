@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BALANCE rock art by HHK — Henry "theTruth" Kennemore</title>
+<meta name="description" content="BALANCE — rock balancing art by Henry 'theTruth' Kennemore. Hardback book, $30.">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0b0b0d; color: #f2f0ea; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .hero { position: relative; width: 100%; max-height: 92vh; overflow: hidden; }
+  .hero img { width: 100%; height: 92vh; object-fit: cover; object-position: center 30%; display: block; }
+  .hero-overlay { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0,0,0,.25), rgba(0,0,0,0) 35%, rgba(0,0,0,0) 60%, rgba(0,0,0,.78)); }
+  .hero-title { position: absolute; bottom: 0; left: 0; right: 0; padding: 28px 22px; }
+  .hero-title h1 { font-size: 2.6rem; letter-spacing: .35em; font-weight: 800; }
+  .hero-title p { margin-top: 6px; font-size: 1rem; letter-spacing: .18em; color: #cfc9bd; }
+  .section { max-width: 720px; margin: 0 auto; padding: 40px 22px; text-align: center; }
+  .section h2 { font-size: 1.4rem; letter-spacing: .25em; margin-bottom: 14px; }
+  .section p.lead { color: #b9b3a6; line-height: 1.7; font-size: 1.02rem; }
+  video.flip { width: 100%; border-radius: 12px; margin-top: 22px; background: #000; box-shadow: 0 12px 40px rgba(0,0,0,.55); }
+  .buy { background: #141416; border-top: 1px solid #26262a; border-bottom: 1px solid #26262a; }
+  .price { font-size: 3rem; font-weight: 800; color: #7fd08a; margin: 10px 0 4px; }
+  .price-sub { color: #b9b3a6; letter-spacing: .12em; font-size: .9rem; margin-bottom: 20px; }
+  .qr { width: 240px; max-width: 70vw; border-radius: 14px; background: #fff; padding: 12px; }
+  .scan-hint { margin-top: 12px; color: #b9b3a6; font-size: .95rem; letter-spacing: .06em; }
+  footer { text-align: center; padding: 30px 20px 44px; color: #6f6a5e; font-size: .85rem; letter-spacing: .1em; }
+  footer .sig { color: #a49d8d; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+  <div class="hero">
+    <img src="hero-rock.jpg" alt="A massive boulder balanced on a single point — BALANCE rock art by HHK">
+    <div class="hero-overlay"></div>
+    <div class="hero-title">
+      <h1>BALANCE</h1>
+      <p>ROCK ART BY HHK</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>THE BOOK</h2>
+    <p class="lead">Every stone in this book was balanced by hand — no glue, no tricks, just patience and feel. Sixty seconds through these pages and you'll feel how still a heavy thing can stand.</p>
+    <video class="flip" controls playsinline preload="metadata" poster="hero-rock.jpg">
+      <source src="balance-flipthrough.mp4" type="video/mp4">
+    </video>
+  </div>
+
+  <div class="section buy">
+    <h2>OWN THE HARDBACK</h2>
+    <div class="price">$30.00</div>
+    <div class="price-sub">BALANCE ROCK ART BOOK — FIRST PRINT</div>
+    <img class="qr" src="qr-code.png" alt="Scan to pay $30 for the BALANCE rock art hardback">
+    <p class="scan-hint">Scan the code to pay</p>
+  </div>
+
+  <footer>
+    GODWORLD.ORG
+    <div class="sig">Henry "theTruth" Kennemore &infin;</div>
+  </footer>
+
+</body>
+</html>
