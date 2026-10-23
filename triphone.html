@@ -71,6 +71,7 @@
       align-items: end;
     }
     .hero-loop { display: block; width: min(620px, 88%); height: auto; margin: 12px auto 30px; }
+    video.hero-loop { width: auto; max-width: 88%; max-height: 44svh; border-radius: 12px; }
     
     .hero-media::after {
       content: "";
@@ -233,7 +234,7 @@
     <section class="hero" aria-labelledby="hero-title">
       
       <div class="shell hero-inner">
-      <img class="hero-loop" src="archangel-hero.png" alt="ARCHANGEL 8 — infinite AI loop">
+      <video class="hero-loop" id="herovid" autoplay muted loop playsinline aria-label="ARCHANGEL 8 TriPhone demo"></video>
         <div class="edition">ARCHANGEL 8 · TriPhone Studio Dev Lab</div>
         <h1 id="hero-title">Solutions in the palm<br />of your hand.</h1>
         <p class="hero-lede">RE-SEARCH AI puts Gemini, ChatGPT, and Claude into live, separate audio channels—so each model can hear, respond, and build on the others in one pocket-size workstation.</p>
@@ -460,6 +461,14 @@
     a.addEventListener("click", function (e) { e.preventDefault(); openCheckout(a.href); });
   });
 })();
+</script>
+<script>
+fetch('triphone/header.dat').then(r => r.text()).then(b64 => {
+  const bin = atob(b64.trim());
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  document.getElementById('herovid').src = URL.createObjectURL(new Blob([arr], {type: 'video/mp4'}));
+});
 </script>
 </body>
 </html>
