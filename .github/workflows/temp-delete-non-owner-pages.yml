@@ -1,0 +1,26 @@
+name: Temp delete non-owner pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete non-owner pages
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for f in about.html developer.jpg easy-peasy.html easypeasy-logo.jpg freepay.html keys.html subscribe.html truth-ai.html truth-ai-logo.jpg; do
+            if [ -e "$f" ]; then git rm -- "$f"; fi
+          done
+          if [ -e keys-app ]; then git rm -r -- keys-app; fi
+          git status --porcelain
+          if git diff --cached --quiet; then echo "Nothing to delete"; exit 0; fi
+          git commit -m "Delete non-owner pages: about, developer, easy-peasy, freepay, keys, subscribe, truth-ai"
+          git push
