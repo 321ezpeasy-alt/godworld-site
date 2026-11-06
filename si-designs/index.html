@@ -43,7 +43,9 @@
     display:flex;align-items:center;justify-content:center;
     cursor:pointer;overflow:hidden;
     transition:opacity .7s ease;
+    touch-action:manipulation;-webkit-tap-highlight-color:transparent;
   }
+  #gate>*{pointer-events:none}
   #gate.gone{opacity:0;pointer-events:none}
   #gateText{
     color:#cfe4ff;font-family:"Chakra Petch",sans-serif;
@@ -163,6 +165,16 @@
   }
   textarea{resize:vertical;min-height:74px}
   input:focus,textarea:focus{outline:2px solid var(--blue);outline-offset:1px;border-color:var(--blue)}
+  .hint{font-size:13.5px;color:var(--muted);font-weight:400}
+  .radioRow{display:flex;gap:10px;flex-wrap:wrap}
+  .radioPill{
+    display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+    background:var(--field);border:1px solid var(--line);border-radius:999px;
+    padding:9px 16px;font-size:15px;font-weight:500;color:var(--ink);
+  }
+  .radioPill:has(input:checked){border-color:var(--gold);color:var(--gold)}
+  .radioPill input{accent-color:var(--gold);width:17px;height:17px;margin:0;cursor:pointer}
+  .radioPill:focus-within{outline:2px solid var(--blue);outline-offset:2px}
   .sendBtn{
     display:block;width:100%;padding:17px 20px;margin-top:6px;
     background:linear-gradient(180deg,#2f8fe8,#1663b8);
@@ -285,46 +297,57 @@
     if (started) return;
     started = true;
 
-    var song = document.getElementById('songAudio');
-    var greet = document.getElementById('greetAudio');
-
-    /* Music: low, looped, ducked while the greeting speaks. */
-    if (song) {
-      song.volume = 0.03;
-      song.loop = true;
-      var sp = song.play();
-      if (sp && sp.catch) sp.catch(function () {});
-    }
-    if (greet) {
-      greet.currentTime = 0;
-      var gp = greet.play();
-      if (gp && gp.catch) gp.catch(function () {});
-      speakPulse(true);
-      greet.addEventListener('ended', function () {
-        speakPulse(false);
-        if (song) song.volume = 0.065;
-      });
-    }
-
+    /* Reveal FIRST, on timers, before touching audio or canvas — so a
+       failure in either can never strand the visitor on the void. */
     var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduced) {
       gate.classList.add('gone');
       showPage();
       setTimeout(function () { gate.style.display = 'none'; }, 100);
-      return;
+    } else {
+      gate.classList.add('rushing');
+      setTimeout(function () {
+        gate.classList.add('gone');
+        showPage();
+        setTimeout(function () { gate.style.display = 'none'; }, 800);
+      }, 2150);
+      try { runRush(2100); } catch (e) {}
     }
-    gate.classList.add('rushing');
-    runRush(2100);
-    setTimeout(function () {
-      gate.classList.add('gone');
-      showPage();
-      setTimeout(function () { gate.style.display = 'none'; }, 800);
-    }, 2150);
+
+    /* Music + greeting start inside this same tap handler (mobile browsers
+       only allow audio from a user gesture). Low, looped, ducked while
+       the greeting speaks. */
+    try {
+      var song = document.getElementById('songAudio');
+      var greet = document.getElementById('greetAudio');
+      if (song) {
+        song.volume = 0.03;
+        song.loop = true;
+        var sp = song.play();
+        if (sp && sp.catch) sp.catch(function () {});
+      }
+      if (greet) {
+        try { greet.currentTime = 0; } catch (e2) {}
+        var gp = greet.play();
+        if (gp && gp.catch) gp.catch(function () {});
+        speakPulse(true);
+        greet.addEventListener('ended', function () {
+          speakPulse(false);
+          var s2 = document.getElementById('songAudio');
+          if (s2) s2.volume = 0.065;
+        });
+      }
+    } catch (e3) {}
   }
 
   gate.addEventListener('touchstart', enter, { passive: true });
+  gate.addEventListener('touchend', enter);
   gate.addEventListener('pointerdown', enter);
   gate.addEventListener('click', enter);
+  /* Backstop: while the gate is up it covers the whole screen, so any
+     first interaction anywhere is a tap on the gate. */
+  document.addEventListener('pointerdown', enter, true);
+  document.addEventListener('touchstart', enter, { passive: true, capture: true });
   gate.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enter(); }
   });
@@ -365,45 +388,88 @@
     </button>
     <button class="pathCard" type="button" id="pathDemo" aria-pressed="true">
       <h2>Give us your info — we&rsquo;ll put a demo together</h2>
-      <p>Give us the basics below — email, business name, what you do, phone if you want it listed, contact info to show, and your colors &amp; style. We&rsquo;ll put a demo together from that.</p>
+      <p>Complete the website analysis below — business and site name, logo, motto, what you do, and how you want it to look. We&rsquo;ll put a demo together from that.</p>
       <span class="go">Start here &rarr;</span>
     </button>
   </div>
 
   <section class="formBlock" id="intake">
-    <h2>What we need to build your site</h2>
-    <p class="formIntro">Just the basics — six things and we can get started. When you send it, your answers open in your own mail app, addressed to us and ready to go.</p>
+    <h2>Website analysis</h2>
+    <p class="formIntro">A few standard questions about your business and how you want your website to present it. When you send it, your answers open in your own mail app, addressed to us and ready to go.</p>
     <div id="intentLine">I&rsquo;m here to: put a demo together</div>
 
     <form id="intakeForm" novalidate>
       <fieldset>
-        <legend>The basics</legend>
+        <legend>Business &amp; brand</legend>
         <div class="grid">
           <div class="field">
-            <label for="f-email">1. Your email address</label>
+            <label for="f-business">1. Business name</label>
+            <input type="text" id="f-business" name="business" autocomplete="organization" placeholder="Legal or trading name of your business" />
+          </div>
+          <div class="field">
+            <label for="f-sitename">2. Website name</label>
+            <input type="text" id="f-sitename" name="sitename" placeholder="The name you want for your site" />
+            <span class="hint">The name visitors will see across the top of your website.</span>
+          </div>
+          <div class="field full">
+            <label>3. Do you have a logo?</label>
+            <div class="radioRow" role="radiogroup" aria-label="Do you have a logo?">
+              <label class="radioPill"><input type="radio" name="logoHas" value="Yes" /> Yes</label>
+              <label class="radioPill"><input type="radio" name="logoHas" value="No" /> No</label>
+              <label class="radioPill"><input type="radio" name="logoHas" value="I need one designed" /> I need one designed</label>
+            </div>
+          </div>
+          <div class="field full">
+            <label for="f-logo-notes">Logo notes</label>
+            <input type="text" id="f-logo-notes" name="logoNotes" placeholder="Describe your logo, or note that you will send it to us" />
+            <span class="hint">If you have a logo, tell us about it here — you can send the file to us after we reply.</span>
+          </div>
+          <div class="field full">
+            <label for="f-motto">4. Business motto or tagline</label>
+            <input type="text" id="f-motto" name="motto" placeholder="The motto or tagline you want on the site" />
+            <span class="hint">Leave blank if you don&rsquo;t have one — or write &ldquo;help me create one.&rdquo;</span>
+          </div>
+          <div class="field full">
+            <label for="f-does">5. What does your business do?</label>
+            <textarea id="f-does" name="does" rows="3" placeholder="A short description — what you offer, and who you offer it to"></textarea>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Contact details</legend>
+        <div class="grid">
+          <div class="field">
+            <label for="f-email">6. Email address</label>
             <input type="email" id="f-email" name="email" autocomplete="email" placeholder="you@yourbusiness.com" />
+            <span class="hint">So we can reply with your consultation or demo.</span>
           </div>
           <div class="field">
-            <label for="f-business">2. Business name</label>
-            <input type="text" id="f-business" name="business" autocomplete="organization" placeholder="Name of your company" />
+            <label for="f-phone">7. Phone number</label>
+            <input type="tel" id="f-phone" name="phone" autocomplete="tel" placeholder="(555) 555-5555" />
           </div>
           <div class="field full">
-            <label for="f-does">3. What does your business do?</label>
-            <textarea id="f-does" name="does" rows="3" placeholder="In a sentence or two — what you do, who you do it for"></textarea>
-          </div>
-          <div class="field">
-            <label for="f-phone">4. Phone number</label>
-            <input type="tel" id="f-phone" name="phone" autocomplete="tel" placeholder="Only if you want it listed" />
-            <span style="font-size:13.5px;color:var(--muted)">Leave this blank if you don&rsquo;t want your number shown on the site.</span>
-          </div>
-          <div class="field">
-            <label for="f-listed">5. Contact info to list on your site</label>
-            <input type="text" id="f-listed" name="listed" placeholder="Address, hours, socials — what you want shown" />
-            <span style="font-size:13.5px;color:var(--muted)">Only what you write here goes public.</span>
+            <label>Should this phone number be listed on your website?</label>
+            <div class="radioRow" role="radiogroup" aria-label="List the phone number on the website?">
+              <label class="radioPill"><input type="radio" name="phoneList" value="list" /> List it on the site</label>
+              <label class="radioPill"><input type="radio" name="phoneList" value="nolist" checked /> Do not list it</label>
+            </div>
+            <span class="hint">&ldquo;Do not list&rdquo; means we only use it to contact you — it never appears on the site.</span>
           </div>
           <div class="field full">
-            <label for="f-style">6. How do you want to advertise &amp; look?</label>
-            <textarea id="f-style" name="style" rows="3" placeholder="Color scheme, style, vibe — bold, clean, classic? Any colors you love or hate, and how you want to present your business in general."></textarea>
+            <label for="f-listed">8. Contact information to show on your site</label>
+            <input type="text" id="f-listed" name="listed" placeholder="Business address, hours, social media links — what you want shown" />
+            <span class="hint">Only what you write here goes public on the website.</span>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Design &amp; advertising</legend>
+        <div class="grid">
+          <div class="field full">
+            <label for="f-style">9. Colors and style</label>
+            <textarea id="f-style" name="style" rows="3" placeholder="Colors you want, the style or feel you are after — bold, clean, classic — and how you want the site to advertise your business in general"></textarea>
           </div>
         </div>
       </fieldset>
@@ -456,23 +522,37 @@
       var el = document.getElementById(id);
       return el ? el.value.trim() : '';
     }
+    function radio(name) {
+      var el = document.querySelector('input[name="' + name + '"]:checked');
+      return el ? el.value : '';
+    }
     var phone = v('f-phone');
+    var phoneLine;
+    if (!phone) phoneLine = 'Not provided — do not list';
+    else if (radio('phoneList') === 'list') phoneLine = phone + ' (OK to list on the site)';
+    else phoneLine = phone + ' (do NOT list on the site — contact only)';
+    var logo = radio('logoHas') || 'Not specified';
+    var logoNotes = v('f-logo-notes');
+    if (logoNotes) logo += ' — ' + logoNotes;
     var lines = [
       'I am here to: ' + intent,
       '',
-      'THE BASICS',
-      'Email address: ' + v('f-email'),
-      'Business name: ' + v('f-business'),
+      'WEBSITE ANALYSIS',
+      '1. Business name: ' + v('f-business'),
+      '2. Website name: ' + v('f-sitename'),
+      '3. Logo: ' + logo,
+      '4. Motto / tagline: ' + (v('f-motto') || '(none provided)'),
       '',
-      'What the business does:',
+      '5. What the business does:',
       v('f-does'),
       '',
-      'Phone number: ' + (phone ? phone + ' (OK to list on the site)' : 'Not provided — do not list'),
+      '6. Email address: ' + v('f-email'),
+      '7. Phone number: ' + phoneLine,
       '',
-      'Contact info to list on the site:',
+      '8. Contact information to show on the site:',
       v('f-listed') || '(use email / phone above)',
       '',
-      'How they want to advertise / look — colors & style:',
+      '9. Colors and style — how they want the site to look and advertise them:',
       v('f-style')
     ];
     var name = v('f-business') || v('f-email') || 'New client';
