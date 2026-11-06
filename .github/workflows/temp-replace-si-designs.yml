@@ -1,0 +1,24 @@
+name: Temp replace si-designs index
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/temp-replace-si-designs.yml
+permissions:
+  contents: write
+jobs:
+  replace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Move s-i-designs.html onto index.html
+        run: |
+          git config user.name "321ezpeasy-alt"
+          git config user.email "321ezpeasy-alt@users.noreply.github.com"
+          if [ -f si-designs/s-i-designs.html ]; then
+            git mv -f si-designs/s-i-designs.html si-designs/index.html
+            git commit -m "Replace si-designs/index.html with new S.I. Designs build"
+            git push
+          else
+            echo "si-designs/s-i-designs.html not found; nothing to do"
+          fi
