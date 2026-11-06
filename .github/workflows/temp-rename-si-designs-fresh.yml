@@ -1,0 +1,24 @@
+name: Temporary rename S.I. Designs (fresh)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rename:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rename fresh page onto index.html
+        run: |
+          if [ ! -f si-designs/s-i-designs-fresh-one-page.html ]; then
+            echo "si-designs/s-i-designs-fresh-one-page.html not found; nothing to rename."
+            exit 0
+          fi
+          git config user.name "321ezpeasy-alt"
+          git config user.email "321ezpeasy-alt@users.noreply.github.com"
+          git mv -f si-designs/s-i-designs-fresh-one-page.html si-designs/index.html
+          git commit -m "Replace si-designs/index.html with new S.I. Designs build"
+          git push
