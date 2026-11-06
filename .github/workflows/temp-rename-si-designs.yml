@@ -1,0 +1,24 @@
+name: Temp rename S.I. Designs file
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rename:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rename s-i-designs.html onto index.html
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ ! -f si-designs/s-i-designs.html ]; then
+            echo "si-designs/s-i-designs.html not found; nothing to do."
+            exit 0
+          fi
+          git mv -f si-designs/s-i-designs.html si-designs/index.html
+          git commit -m "Rename si-designs/s-i-designs.html to si-designs/index.html"
+          git push
