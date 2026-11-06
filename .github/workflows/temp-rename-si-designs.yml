@@ -1,0 +1,17 @@
+name: Temp rename si-designs
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  rename:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rename staging file onto index.html
+        run: |
+          git mv -f si-designs/si-designs-video.html si-designs/index.html
+          git config user.name "321ezpeasy-alt"
+          git config user.email "321ezpeasy-alt@users.noreply.github.com"
+          git commit -m "Replace si-designs/index.html with video-background S.I. Designs build"
+          git push
