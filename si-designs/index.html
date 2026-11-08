@@ -199,6 +199,26 @@
   .copied{display:none;color:var(--blue);font-weight:700;font-size:14.5px}
   .copied.show{display:inline}
 
+  /* ---------- TALK IT THROUGH (the avatar walks you through it) ---------- */
+  .talk{max-width:640px;margin:0 auto;padding:44px 20px 8px}
+  .talk h2{font-size:clamp(24px,4.4vw,30px);font-weight:800}
+  .talk .talk-sub{color:var(--muted);font-size:15.5px;line-height:1.6;margin-top:10px}
+  .chat{margin-top:22px;display:flex;flex-direction:column;gap:10px}
+  .bubble{max-width:88%;padding:13px 16px;border-radius:18px;font-size:16px;line-height:1.55}
+  .bubble.avatar{align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:6px}
+  .bubble.avatar .who{display:block;font-family:"Sora",sans-serif;font-weight:700;font-size:12.5px;letter-spacing:.04em;color:var(--gold);margin-bottom:4px}
+  .bubble.visitor{align-self:flex-end;background:rgba(56,225,255,.14);border:1px solid rgba(56,225,255,.45);border-bottom-right-radius:6px}
+  .chips{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .chip{border:1px solid var(--blue);background:rgba(56,225,255,.1);color:var(--ice);border-radius:999px;padding:11px 18px;font-size:15px;font-weight:700}
+  .chip:hover{background:rgba(56,225,255,.22)}
+  .chat-row{display:flex;gap:10px;margin-top:14px}
+  .chat-row input{flex:1;min-width:0;background:var(--deep);border:1px solid var(--line);border-radius:12px;color:var(--text);padding:13px 15px;font-size:16px;font-family:inherit}
+  .chat-row input:focus{border-color:var(--blue);outline:none;box-shadow:0 0 0 3px rgba(56,225,255,.18)}
+  .chat-row input:disabled{opacity:.45}
+  .chat-row button:disabled{opacity:.45}
+  .talk-done{display:none;color:var(--blue);font-size:15px;font-weight:600;line-height:1.55;margin-top:16px}
+  .talk-done.show{display:block}
+
   /* ---------- FOOTER ---------- */
   footer{max-width:640px;margin:0 auto;padding:52px 20px 46px;text-align:center}
   footer .fname{font-family:"Sora",sans-serif;font-size:18px;font-weight:700}
@@ -275,6 +295,19 @@
       <p class="price-big">A $100 website</p>
       <p class="price-detail">$50 for the consultation and build, and $50 a year for the subscription. Hosting and maintenance are free for as long as you don't change anything, and a couple of minor initial edits are included. If you want changes down the road, those are priced per item, fair and simple.</p>
     </div>
+  </section>
+
+  <!-- TALK IT THROUGH — theTruth AI walks you through building yours -->
+  <section class="talk" aria-labelledby="talk-h">
+    <h2 id="talk-h">Talk it through with theTruth AI</h2>
+    <p class="talk-sub">Skip the form if you'd rather talk. theTruth AI asks six short questions, one at a time, reads your answers back, and sends the request only when you say so. Rather write it out? The form below takes the same basics in writing.</p>
+    <div class="chat" id="chatBox" aria-live="polite"></div>
+    <div class="chips" id="chipRow"></div>
+    <div class="chat-row">
+      <input id="chatInput" type="text" placeholder="Tap Start my website request to begin" autocomplete="off" disabled />
+      <button class="btn-primary" id="chatSend" type="button" disabled>Answer</button>
+    </div>
+    <p class="talk-done" id="talkDone">Your mail app should be open with your request ready — just press send there, and we will put it together and contact you back.</p>
   </section>
 
   <!-- THE INTAKE — SIX BASICS -->
@@ -586,5 +619,154 @@
   });
 })();
 </script>
+<script>
+/* ---------- THE WALKTHROUGH — theTruth AI takes the six basics by conversation ----------
+   One question at a time, the email checked, a read-back of everything gathered,
+   and nothing sent until the visitor taps "Send my request" — which opens their
+   own mail app with the request addressed to S.I. Designs (aa7gai@gmail.com),
+   the same pattern as the form. Client-side only: this page has no server. */
+(function(){
+  "use strict";
+  var START = "Start my website request", SEND = "Send my request", RESTART = "Start over";
+  var SKIP = "Skip for now", LYES = "Yes, list it", LNO = "No, keep it private";
+  var box = document.getElementById('chatBox');
+  var chips = document.getElementById('chipRow');
+  var input = document.getElementById('chatInput');
+  var sendBtn = document.getElementById('chatSend');
+  var talkDone = document.getElementById('talkDone');
+  var walk = null;
+
+  function emptyData(){
+    return { businessName:"", whatItDoes:"", email:"", phone:"", listContact:true, advertiseHow:"" };
+  }
+  function bubble(role, text){
+    var d = document.createElement('div');
+    d.className = 'bubble ' + role;
+    if(role === 'avatar'){
+      var w = document.createElement('span');
+      w.className = 'who';
+      w.textContent = 'theTruth AI';
+      d.appendChild(w);
+      d.appendChild(document.createTextNode(text));
+    } else {
+      d.textContent = text;
+    }
+    box.appendChild(d);
+    if(d.scrollIntoView) d.scrollIntoView({ block:'nearest', behavior:'smooth' });
+  }
+  function setChips(list){
+    chips.innerHTML = '';
+    list.forEach(function(label){
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip';
+      b.textContent = label;
+      b.addEventListener('click', function(){ answer(label); });
+      chips.appendChild(b);
+    });
+  }
+  function chipsFor(step){
+    if(step === 4) return [LYES, LNO];
+    if(step === 5) return [SKIP];
+    if(step === 6) return [SEND, RESTART];
+    return [];
+  }
+  function promptFor(step, d){
+    switch(step){
+      case 0: return "Let's build yours. First \u2014 what's the name of your business or company?";
+      case 1: return "Good name. What does " + d.businessName + " do? Say it in your own words \u2014 this is what your site's avatar will learn to say about you.";
+      case 2: return "Where should your customers' requests reach you? Give me the email for the business.";
+      case 3: return "And a phone number to go with it?";
+      case 4: return "Should that email and number be listed on your site, out where customers can see them \u2014 or kept between you and S.I. Designs?";
+      case 5: return "Last one. How do you want to advertise \u2014 Google, Facebook, word of mouth, a sign on the truck? Or tap Skip for now.";
+      default: return "Here's what I gathered for " + d.businessName + ": " + d.whatItDoes + " Requests will reach " + d.email + " and " + d.phone + ", and that contact info will " + (d.listContact ? "be listed on the site" : "stay private \u2014 it comes to S.I. Designs only") + "." + (d.advertiseHow ? " Advertising: " + d.advertiseHow + "." : "") + " If that sounds right, tap Send my request and it's in.";
+    }
+  }
+  function setInput(on, placeholder){
+    input.disabled = !on;
+    sendBtn.disabled = !on;
+    if(placeholder) input.placeholder = placeholder;
+  }
+  function startWalk(){
+    walk = { step:0, data:emptyData() };
+    talkDone.classList.remove('show');
+    setChips([]);
+    setInput(true, "Answer the avatar");
+    bubble('avatar', promptFor(0, walk.data));
+    input.focus();
+  }
+  function finish(){
+    var d = walk.data;
+    walk = null;
+    var lines = [
+      'S.I. DESIGNS \u2014 WEBSITE REQUEST (through the avatar)',
+      '',
+      'Business name: ' + d.businessName,
+      'What the business does: ' + d.whatItDoes,
+      'Email address: ' + d.email,
+      'Phone number: ' + d.phone,
+      'List that contact info on the site: ' + (d.listContact ? 'Yes \u2014 list it' : 'No \u2014 keep it private'),
+      'How they want to advertise: ' + (d.advertiseHow || '(skipped for now)')
+    ];
+    var a = document.createElement('a');
+    a.href = 'mailto:aa7gai@gmail.com?subject=' +
+      encodeURIComponent('S.I. Designs \u2014 Website Request: ' + d.businessName) +
+      '&body=' + encodeURIComponent(lines.join('\n'));
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    talkDone.classList.add('show');
+    bubble('avatar', "Done \u2014 the request for " + d.businessName + " is ready in your mail app, addressed to S.I. Designs. Press send there and it's in. Idea today, live by tomorrow \u2014 that's the way this works.");
+    setChips([START]);
+    setInput(false, "Tap Start my website request to go again");
+  }
+  function answer(raw){
+    var text = (raw || '').trim();
+    if(!text) return;
+    if(!walk){
+      if(text === START){ bubble('visitor', text); startWalk(); }
+      return;
+    }
+    bubble('visitor', text);
+    var step = walk.step, d = walk.data;
+    if(step === 6){
+      if(text === SEND){ finish(); return; }
+      if(text === RESTART){
+        walk = { step:0, data:emptyData() };
+        setChips([]);
+        setInput(true, "Answer the avatar");
+        bubble('avatar', promptFor(0, walk.data));
+      }
+      return;
+    }
+    if(step === 0) d.businessName = text;
+    if(step === 1) d.whatItDoes = text;
+    if(step === 2){
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)){
+        bubble('avatar', "That email doesn't look complete \u2014 check it and give it to me once more?");
+        return;
+      }
+      d.email = text;
+    }
+    if(step === 3) d.phone = text;
+    if(step === 4) d.listContact = !(text === LNO || text.toLowerCase().indexOf('no') === 0);
+    if(step === 5) d.advertiseHow = (text === SKIP) ? "" : text;
+    walk.step = step + 1;
+    setChips(chipsFor(walk.step));
+    if(walk.step === 6) setInput(false, "Check it over \u2014 then tap Send my request");
+    bubble('avatar', promptFor(walk.step, d));
+  }
+  sendBtn.addEventListener('click', function(){
+    var v = input.value; input.value = ''; answer(v);
+  });
+  input.addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); var v = input.value; input.value = ''; answer(v); }
+  });
+
+  bubble('avatar', "I'm theTruth AI. Tap \u201cStart my website request\u201d and I'll walk you through building yours \u2014 six short questions, one at a time, and I'll read it all back before anything is sent.");
+  setChips([START]);
+})();
+</script>
+
 </body>
 </html>
