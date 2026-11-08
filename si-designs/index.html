@@ -226,6 +226,10 @@
   footer .fcontact a{text-decoration:none;font-weight:600}
   footer .fcontact a:hover{text-decoration:underline}
 
+  /* ---------- ASK ME ANYTHING (free questions, answered on-page) ---------- */
+  .ask .bubble.typing{color:var(--muted);font-style:italic}
+  .ask-start{margin-top:14px}
+
   @media (prefers-reduced-motion: reduce){
     *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
     html{scroll-behavior:auto}
@@ -309,6 +313,17 @@
       <button class="btn-primary" id="chatSend" type="button" disabled>Answer</button>
     </div>
     <p class="talk-done" id="talkDone">Your mail app should be open with your request ready — just press send there, and we will put it together and contact you back.</p>
+  </section>
+
+  <!-- ASK ME ANYTHING — free questions with theTruth AI, answered right on this page -->
+  <section class="talk ask" aria-labelledby="ask-h">
+    <h2 id="ask-h">Ask me anything</h2>
+    <p class="talk-sub">Rather just ask? Type any question about getting your website built &mdash; the price, how fast, how it works, taking payments &mdash; and theTruth AI answers right here. When you're ready to start, say the word and the walkthrough above takes your six answers.</p>
+    <div class="chat" id="askBox" aria-live="polite"></div>
+    <div class="chat-row">
+      <input id="askInput" type="text" placeholder="Ask theTruth AI a question" autocomplete="off" />
+      <button class="btn-primary" id="askSend" type="button">Ask</button>
+    </div>
   </section>
 
   <!-- THE INTAKE — SIX BASICS -->
@@ -774,6 +789,133 @@
 
   bubble('avatar', "I'm theTruth AI. Tap \u201cStart my website request\u201d and I'll walk you through building yours \u2014 six short questions, one at a time, and I'll read it all back before anything is sent.");
   setChips([START]);
+})();
+</script>
+
+<script>
+(function(){
+  "use strict";
+  /* Free-question chat with theTruth AI. Every answer is produced right
+     here on this page from S.I. Designs' standing facts — no network
+     calls, no outside service. When a visitor wants a website, this
+     hands off to the scripted walkthrough above. */
+  var box = document.getElementById('askBox');
+  var input = document.getElementById('askInput');
+  var sendBtn = document.getElementById('askSend');
+  if(!box || !input || !sendBtn) return;
+
+  var PHONE = "(573) 587-9842";
+  var EMAIL = "aa7gai@gmail.com";
+
+  function bubble(role, text){
+    var d = document.createElement('div');
+    d.className = 'bubble ' + role;
+    if(role === 'avatar'){
+      var w = document.createElement('span');
+      w.className = 'who';
+      w.textContent = 'theTruth AI';
+      d.appendChild(w);
+      d.appendChild(document.createTextNode(text));
+    } else {
+      d.textContent = text;
+    }
+    box.appendChild(d);
+    if(d.scrollIntoView) d.scrollIntoView({ block:'nearest', behavior:'smooth' });
+    return d;
+  }
+  function speak(text){
+    try {
+      if(!('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.03;
+      window.speechSynthesis.speak(u);
+    } catch(e){}
+  }
+  function startWalkthrough(){
+    var talkH = document.getElementById('talk-h');
+    if(talkH && talkH.scrollIntoView) talkH.scrollIntoView({ behavior:'smooth', block:'start' });
+    setTimeout(function(){
+      var chips = document.querySelectorAll('#chipRow .chip');
+      for(var i = 0; i < chips.length; i++){
+        if(chips[i].textContent === 'Start my website request'){ chips[i].click(); return; }
+      }
+    }, 650);
+  }
+
+  var FALLBACK = "That one is outside what I can answer right here \u2014 I am the front desk for S.I. Designs, so websites are my whole world. Ask me about the price, how fast it happens, or how it works \u2014 or say the word and I will start your request. Rather talk to a person? Call S.I. Designs at " + PHONE + " or email " + EMAIL + ".";
+
+  var RULES = [
+    { id:'price',
+      re:/\b(price|pricing|cost|costs|charge|charges|fee|fees|how much|expensive|cheap|afford|budget)\b/,
+      reply:"One price, no tiers: a $100 website. That is $50 for the consultation and the build, and $50 a year for the subscription. Hosting and maintenance are free for as long as you don\u2019t change anything." },
+    { id:'speed',
+      re:/\b(how (fast|long|quick|quickly|soon)|turnaround|how long does it take|ready by|deadline|timeline)\b/,
+      reply:"Fast. Bring me your idea today and your site is live by tomorrow, hosted right here on godworld.org. To get rolling I ask you six short questions \u2014 say the word and we will start." },
+    { id:'payments',
+      re:/\b(square|payments?|pay online|credit cards?|debit|checkout|pos|point of sale|take cards|online store|e-?commerce|sell online|shop)\b/,
+      reply:"Yes \u2014 your own Square POS store can be folded right into your site, so your business takes online payments securely through your own Square account. The money goes straight to you, same as at your counter." },
+    { id:'hosting',
+      re:/\b(host|hosting|hosted|server|servers|domain|maintenance|maintain|upkeep)\b/,
+      reply:"Your site lives on godworld.org \u2014 hosting and maintenance are free for as long as you don\u2019t change anything. When you do want changes later, they are priced per item, fair and simple." },
+    { id:'edits',
+      re:/\b(changes?|edits?|updates?|revise|revision|tweak|modify|after (it|the site) is live|once (it|the site) is live)\b/,
+      reply:"A couple of minor initial edits are included before your site launches. After that, changes are priced per item \u2014 fair and simple \u2014 and hosting and maintenance stay free while nothing changes." },
+    { id:'avatar',
+      re:/\b(avatar|digital twin|chat ?bot|spokesperson|representative|greets?|greeting|talk (to|with) (customers|visitors|people)|super intelligence|artificial intelligence)\b|\bare you (an? )?(ai|bot|robot)\b/,
+      reply:"Every site can have an avatar out front \u2014 a digital twin of the owner \u2014 talking with customers the way I am talking with you now. I am theTruth AI, Henry\u2019s digital twin. The owner pre-programs me by prompt, and the super intelligence does the heavy lifting on the website, code and deployment included." },
+    { id:'included',
+      re:/\b(what (do i|does it|would i) get|what'?s included|included|include|services|what do you (do|build|offer|make)|package|kind of (site|website))\b/,
+      reply:"Here is what you get: a website built for your business, hosted on godworld.org, live by tomorrow. It is $100 \u2014 $50 for the consultation and build, $50 a year for the subscription \u2014 hosting and maintenance free while nothing changes, and your Square store can be folded in so you can take payments online." },
+    { id:'contact',
+      re:/\b(phone|call (you|me|them|henry)|number|e-?mail|contact|reach (you|out|henry)|talk to (a )?(human|person|someone|henry)|real person)\b/,
+      reply:"You can reach S.I. Designs at " + PHONE + ", or by email at " + EMAIL + ". Or start right here \u2014 say the word and I will take your six answers now." },
+    { id:'doors',
+      re:/\b(tri ?phone|archangel|balance|m3d|rock|book|contracting|other (sites|pages|businesses)|what else|doors?|godworld)\b/,
+      reply:"godworld.org is a world within a world, with four doors: S.I. Designs \u2014 that is here, website building; the ARCHANGEL 8 TriPhone; BALANCE \u2014 rock balancing art and the BALANCE book; and M3D Contracting, a client site hosted here. You are at the S.I. Designs door." },
+    { id:'who',
+      re:/\b(who are you|your name|who is (henry|thetruth)|what are you|are you (real|human))\b/,
+      reply:"I am theTruth AI \u2014 the digital twin of Henry \u201ctheTruth\u201d Kennemore, founder of godworld.org, and the spokesperson out front for S.I. Designs. Henry builds the sites; I do the talking here." },
+    { id:'start',
+      re:/\b(want|need|would like|i'?d like|ready to|let'?s|lets)\b[^.?!]{0,40}\b(website|site|one|start|started|sign up|build)\b|\bhow (do|can) i (start|begin|get one|sign up|get started)\b|^(start|begin|sign up|yes|yeah|yep|sure)\b/,
+      reply:"Love it \u2014 let\u2019s build yours. I will walk you through six short questions, one at a time, and read it all back before anything is sent.",
+      action:'start' }
+  ];
+
+  function answerFor(text){
+    var t = ' ' + text.toLowerCase().replace(/[\u2018\u2019]/g, "'") + ' ';
+    if(/^\s*(hi|hello|hey|howdy|good (morning|afternoon|evening))\b/.test(t) && t.length < 40){
+      return { reply:"Hey there \u2014 I am theTruth AI, out front for S.I. Designs. Ask me anything about getting your website built \u2014 the price, how fast, how it works \u2014 or say \u201clet\u2019s start\u201d and I will walk you through it." };
+    }
+    for(var i = 0; i < RULES.length; i++){
+      if(RULES[i].re.test(t)) return RULES[i];
+    }
+    return { reply: FALLBACK };
+  }
+
+  function ask(){
+    var text = input.value.trim();
+    if(!text || sendBtn.disabled) return;
+    input.value = '';
+    sendBtn.disabled = true;
+    bubble('visitor', text);
+    var typing = bubble('avatar', 'One moment\u2026');
+    typing.classList.add('typing');
+    setTimeout(function(){
+      typing.remove();
+      var a = answerFor(text);
+      bubble('avatar', a.reply);
+      speak(a.reply);
+      if(a.action === 'start'){ startWalkthrough(); }
+      sendBtn.disabled = false;
+      input.focus();
+    }, 350);
+  }
+  sendBtn.addEventListener('click', ask);
+  input.addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); ask(); }
+  });
+  bubble('avatar', "I'm theTruth AI \u2014 ask me anything about getting your website built. Price, timing, how it works, taking payments \u2014 or just say \u201clet's start\u201d and I'll walk you through it.");
 })();
 </script>
 
