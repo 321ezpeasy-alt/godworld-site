@@ -255,6 +255,7 @@
   .ask-callrow{margin-top:12px}
   .ask-callrow .btn-call{display:none}
   .ask-callrow .btn-call[aria-pressed="true"]{display:inline-block}
+  .bump-row{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
   .verify-panel{margin:10px 0;padding:12px 14px;border:1px solid rgba(216,237,249,.25);border-radius:14px;background:rgba(255,255,255,.04)}
   .verify-panel label{display:block;font-size:13.5px;font-weight:700;margin:8px 0 4px;color:#d8edf9}
   .verify-panel input,.verify-panel select{width:100%;box-sizing:border-box;padding:9px 10px;border-radius:10px;border:1px solid rgba(216,237,249,.3);background:rgba(0,0,0,.25);color:#fff;font-size:15px}
@@ -767,18 +768,56 @@
   function startWalk(){
     walk = { step:0, data:emptyData() };
     hideVerify();
+    hideBump();
     talkDone.classList.remove('show');
     setChips([]);
     setInput(true, "Answer the avatar");
     bubble('avatar', promptFor(0, walk.data));
     input.focus();
   }
-  function finish(){
+  var bumpPanel = null;
+  function hideBump(){ if(bumpPanel && bumpPanel.parentNode) bumpPanel.parentNode.removeChild(bumpPanel); bumpPanel = null; }
+  function speakOut(text){
+    try {
+      if(!('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.03;
+      window.speechSynthesis.speak(u);
+    } catch(e){}
+  }
+  var BUMP_TEXT = "Your demo site is ready to build \u2014 it lists your phone number and email so customers can reach you, and keeping it updated is hands-on. Or step up to the full interactive avatar storefront for one hundred dollars, where your avatar talks with customers and takes their details for you. Which way do you want to go?";
+  function showBump(){
+    hideBump();
+    setChips([]);
+    setInput(false, "Pick one below to finish");
+    bubble('avatar', BUMP_TEXT);
+    speakOut(BUMP_TEXT);
+    bumpPanel = document.createElement('div');
+    bumpPanel.className = 'bump-row';
+    bumpPanel.id = 'bumpPanel';
+    var b1 = document.createElement('button');
+    b1.type = 'button'; b1.className = 'chip'; b1.textContent = 'Stay with my free demo';
+    b1.addEventListener('click', function(){ chooseBump('FREE DEMO'); });
+    var b2 = document.createElement('button');
+    b2.type = 'button'; b2.className = 'chip'; b2.textContent = 'Step up to the full storefront \u2014 $100';
+    b2.addEventListener('click', function(){ chooseBump('FULL STOREFRONT $100'); });
+    bumpPanel.appendChild(b1); bumpPanel.appendChild(b2);
+    box.appendChild(bumpPanel);
+    if(bumpPanel.scrollIntoView) bumpPanel.scrollIntoView({ block:'nearest', behavior:'smooth' });
+  }
+  function chooseBump(label){
+    bubble('visitor', label === 'FREE DEMO' ? 'Stay with my free demo' : 'Step up to the full storefront \u2014 $100');
+    finish(label);
+  }
+  function finish(choiceLabel){
     hideVerify();
+    hideBump();
     var d = walk.data;
     walk = null;
     var lines = [
       'S.I. DESIGNS \u2014 WEBSITE REQUEST (through the avatar)',
+      'CHOICE: ' + choiceLabel,
       '',
       'Business name: ' + d.businessName,
       'What the business does: ' + d.whatItDoes,
@@ -789,13 +828,13 @@
     ];
     var a = document.createElement('a');
     a.href = 'mailto:aa7gai@gmail.com?subject=' +
-      encodeURIComponent('S.I. Designs \u2014 Website Request: ' + d.businessName) +
+      encodeURIComponent('S.I. Designs \u2014 Website Request [' + choiceLabel + ']: ' + d.businessName) +
       '&body=' + encodeURIComponent(lines.join('\n'));
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     talkDone.classList.add('show');
-    bubble('avatar', "Done \u2014 the request for " + d.businessName + " is ready in your mail app, addressed to S.I. Designs. Press send there and it's in. Idea today, live by tomorrow \u2014 that's the way this works.");
+    bubble('avatar', "Done \u2014 the request for " + d.businessName + " is ready in your mail app, addressed to S.I. Designs. Press send there and it's in. Your choice is on the request: " + choiceLabel + ". Idea today, live by tomorrow \u2014 that's the way this works.");
     setChips([START]);
     setInput(false, "Tap Start my website request to go again");
   }
@@ -809,7 +848,7 @@
     bubble('visitor', text);
     var step = walk.step, d = walk.data;
     if(step === 6){
-      if(text === SEND){ collectVerify(); finish(); return; }
+      if(text === SEND){ collectVerify(); showBump(); return; }
       if(text === RESTART){
         walk = { step:0, data:emptyData() };
         hideVerify();
