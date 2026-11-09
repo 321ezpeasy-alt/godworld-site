@@ -253,6 +253,11 @@
   .ask .bubble.typing{color:var(--muted);font-style:italic}
   .ask-start{margin-top:14px}
   .ask-callrow{margin-top:12px}
+  .ask-callrow .btn-call{display:none}
+  .ask-callrow .btn-call[aria-pressed="true"]{display:inline-block}
+  .verify-panel{margin:10px 0;padding:12px 14px;border:1px solid rgba(216,237,249,.25);border-radius:14px;background:rgba(255,255,255,.04)}
+  .verify-panel label{display:block;font-size:13.5px;font-weight:700;margin:8px 0 4px;color:#d8edf9}
+  .verify-panel input,.verify-panel select{width:100%;box-sizing:border-box;padding:9px 10px;border-radius:10px;border:1px solid rgba(216,237,249,.3);background:rgba(0,0,0,.25);color:#fff;font-size:15px}
   .ask-callrow .btn-call[aria-pressed="true"]{background:#7a1f1f}
   .ask-voice-note{margin-top:8px;color:var(--muted);font-size:15px}
 
@@ -337,7 +342,7 @@
   <!-- TALK IT THROUGH — theTruth AI walks you through building yours -->
   <section class="talk" aria-labelledby="talk-h">
     <h2 id="talk-h">Talk it through with theTruth AI</h2>
-    <p class="talk-sub">Skip the form if you'd rather talk. theTruth AI asks six short questions, one at a time, reads your answers back, and sends the request only when you say so. Rather write it out? The form below takes the same basics in writing.</p>
+    <p class="talk-sub">No forms here — just talk. theTruth AI asks six short questions, one at a time, reads your answers back, and at the end everything you told me shows on screen so you can check it over before anything sends.</p>
     <div class="chat" id="chatBox" aria-live="polite"></div>
     <div class="chips" id="chipRow"></div>
     <div class="chat-row">
@@ -362,78 +367,7 @@
     </div>
   </section>
 
-  <!-- THE INTAKE — SIX BASICS -->
-  <section class="intake" aria-labelledby="intake-h">
-    <h2 id="intake-h">Give us the basics</h2>
-    <p class="intake-note">Rather talk it through? The conversation above comes first — theTruth AI asks, you answer. This written version takes the same six basics.</p>
-    <form id="intakeForm" novalidate>
-      <div class="field">
-        <label for="f-name">Your name</label>
-        <input id="f-name" name="name" type="text" autocomplete="name" placeholder="Your name" />
-      </div>
-
-      <div class="field">
-        <label for="f-company">Business name <span class="req">*</span></label>
-        <input id="f-company" name="company" type="text" autocomplete="organization" placeholder="The name of your business" />
-      </div>
-
-      <div class="field">
-        <label for="f-sitename">Website name</label>
-        <input id="f-sitename" name="sitename" type="text" placeholder="The name you want your website to carry" />
-      </div>
-
-      <div class="field">
-        <label for="f-does">What does your business do?</label>
-        <textarea id="f-does" name="does" placeholder="What your business does"></textarea>
-      </div>
-
-      <div class="field">
-        <label>Do you have a logo you want on the site?</label>
-        <div class="pills" role="group" aria-label="Do you have a logo you want on the site?">
-          <button type="button" class="pill" id="pillLogoYes" aria-pressed="true">Yes, I have a logo</button>
-          <button type="button" class="pill" id="pillLogoNo" aria-pressed="false">Not yet</button>
-        </div>
-        <p class="note">If you have one, you can send it to us after — we'll ask for it when we contact you back.</p>
-      </div>
-
-      <div class="field">
-        <label for="f-motto">Do you have a motto or tagline you want on the site?</label>
-        <input id="f-motto" name="motto" type="text" placeholder="Your motto or tagline — or leave blank" />
-      </div>
-
-      <div class="field">
-        <label for="f-email">Email address <span class="req">*</span></label>
-        <input id="f-email" name="email" type="email" autocomplete="email" placeholder="you@yourbusiness.com" />
-      </div>
-
-      <div class="field">
-        <label for="f-phone">Phone number</label>
-        <input id="f-phone" name="phone" type="tel" autocomplete="tel" placeholder="(555) 555-5555" />
-        <div class="pills" role="group" aria-label="Do you want the phone number listed?">
-          <button type="button" class="pill" id="pillYes" aria-pressed="true">List it on my site</button>
-          <button type="button" class="pill" id="pillNo" aria-pressed="false">Don't list it</button>
-        </div>
-      </div>
-
-      <div class="field">
-        <label for="f-contact">Contact information you want listed on the site</label>
-        <textarea id="f-contact" name="contact" placeholder="The contact information you want shown on your site"></textarea>
-      </div>
-
-      <div class="field">
-        <label for="f-advertise">How do you want to advertise?</label>
-        <textarea id="f-advertise" name="advertise" placeholder="Style, colors, anything you have in mind"></textarea>
-      </div>
-
-      <p class="form-error" id="formError" role="alert"></p>
-      <div class="form-actions">
-        <button class="btn-primary" type="submit">Send</button>
-        <button class="btn-ghost" type="button" id="copyBtn">Copy my answers</button>
-        <span class="copied" id="copiedMsg">Copied.</span>
-      </div>
-      <p class="form-done" id="formDone">Your mail app should be open with your answers ready — just press send there, and we will put it together and contact you back.</p>
-    </form>
-  </section>
+  
 </main>
 
 <footer>
@@ -649,8 +583,8 @@
     pillNo.setAttribute('aria-pressed', yes ? 'false' : 'true');
     listIt = yes ? 'Yes — list it' : 'No — do not list it';
   }
-  pillYes.addEventListener('click', function(){ setPill(true); });
-  pillNo.addEventListener('click', function(){ setPill(false); });
+  if(pillYes) pillYes.addEventListener('click', function(){ setPill(true); });
+  if(pillNo) pillNo.addEventListener('click', function(){ setPill(false); });
 
   /* Logo: have one or not */
   var hasLogo = 'Yes — has a logo (can send it after)';
@@ -661,8 +595,8 @@
     pillLogoNo.setAttribute('aria-pressed', yes ? 'false' : 'true');
     hasLogo = yes ? 'Yes — has a logo (can send it after)' : 'No — not yet';
   }
-  pillLogoYes.addEventListener('click', function(){ setLogoPill(true); });
-  pillLogoNo.addEventListener('click', function(){ setLogoPill(false); });
+  if(pillLogoYes) pillLogoYes.addEventListener('click', function(){ setLogoPill(true); });
+  if(pillLogoNo) pillLogoNo.addEventListener('click', function(){ setLogoPill(false); });
 
   function val(id){ return document.getElementById(id).value.trim(); }
   function buildAnswers(){
@@ -686,7 +620,7 @@
   var form = document.getElementById('intakeForm');
   var formError = document.getElementById('formError');
   var formDone = document.getElementById('formDone');
-  form.addEventListener('submit', function(e){
+  if(form) form.addEventListener('submit', function(e){
     e.preventDefault();
     var email = val('f-email'), company = val('f-company');
     if(!company || !email || email.indexOf('@') < 1){
@@ -706,7 +640,7 @@
     formDone.classList.add('show');
   });
 
-  document.getElementById('copyBtn').addEventListener('click', function(){
+  var copyBtnEl = document.getElementById('copyBtn'); if(copyBtnEl) copyBtnEl.addEventListener('click', function(){
     var text = buildAnswers();
     var msg = document.getElementById('copiedMsg');
     function done(){ msg.classList.add('show'); setTimeout(function(){ msg.classList.remove('show'); }, 2600); }
@@ -783,8 +717,47 @@
       case 3: return "And a phone number to go with it?";
       case 4: return "Should that email and number be listed on your site, out where customers can see them \u2014 or kept between you and S.I. Designs?";
       case 5: return "Last one. How do you want to advertise \u2014 Google, Facebook, word of mouth, a sign on the truck? Or tap Skip for now.";
-      default: return "Here's what I gathered for " + d.businessName + ": " + d.whatItDoes + " Requests will reach " + d.email + " and " + d.phone + ", and that contact info will " + (d.listContact ? "be listed on the site" : "stay private \u2014 it comes to S.I. Designs only") + "." + (d.advertiseHow ? " Advertising: " + d.advertiseHow + "." : "") + " If that sounds right, tap Send my request and it's in.";
+      default: return "Here's what I gathered for " + d.businessName + ": " + d.whatItDoes + " Requests will reach " + d.email + " and " + d.phone + ", and that contact info will " + (d.listContact ? "be listed on the site" : "stay private \u2014 it comes to S.I. Designs only") + "." + (d.advertiseHow ? " Advertising: " + d.advertiseHow + "." : "") + " Here it is on screen \u2014 check it over and fix anything that needs fixing, then tap Send my request and it's in.";
     }
+  }
+  var verifyPanel = null;
+  function hideVerify(){ if(verifyPanel && verifyPanel.parentNode) verifyPanel.parentNode.removeChild(verifyPanel); verifyPanel = null; }
+  function vField(label, id, value){
+    var lab = document.createElement('label'); lab.textContent = label; lab.setAttribute('for', id);
+    var inp = document.createElement('input'); inp.type = 'text'; inp.id = id; inp.value = value || '';
+    verifyPanel.appendChild(lab); verifyPanel.appendChild(inp);
+  }
+  function showVerify(d){
+    hideVerify();
+    verifyPanel = document.createElement('div');
+    verifyPanel.className = 'verify-panel'; verifyPanel.id = 'verifyPanel';
+    var head = document.createElement('p'); head.textContent = 'Your details \u2014 fix anything, then send:'; head.style.cssText = 'font-weight:800;margin:0 0 4px';
+    verifyPanel.appendChild(head);
+    vField('Business name', 'v-business', d.businessName);
+    vField('What the business does', 'v-does', d.whatItDoes);
+    vField('Email address', 'v-email', d.email);
+    vField('Phone number', 'v-phone', d.phone);
+    var lab = document.createElement('label'); lab.textContent = 'List that contact info on the site?'; lab.setAttribute('for', 'v-list');
+    var sel = document.createElement('select'); sel.id = 'v-list';
+    var o1 = document.createElement('option'); o1.value = 'yes'; o1.textContent = 'Yes \u2014 list it';
+    var o2 = document.createElement('option'); o2.value = 'no'; o2.textContent = 'No \u2014 keep it private';
+    sel.appendChild(o1); sel.appendChild(o2); sel.value = d.listContact ? 'yes' : 'no';
+    verifyPanel.appendChild(lab); verifyPanel.appendChild(sel);
+    vField('How you want to advertise', 'v-advertise', d.advertiseHow);
+    box.appendChild(verifyPanel);
+    if(verifyPanel.scrollIntoView) verifyPanel.scrollIntoView({ block:'nearest', behavior:'smooth' });
+  }
+  function collectVerify(){
+    if(!verifyPanel || !walk) return;
+    var d = walk.data;
+    function g(id){ var el = document.getElementById(id); return el ? el.value.trim() : null; }
+    var v;
+    v = g('v-business'); if(v !== null) d.businessName = v;
+    v = g('v-does'); if(v !== null) d.whatItDoes = v;
+    v = g('v-email'); if(v !== null) d.email = v;
+    v = g('v-phone'); if(v !== null) d.phone = v;
+    v = g('v-advertise'); if(v !== null) d.advertiseHow = v;
+    var sel = document.getElementById('v-list'); if(sel) d.listContact = (sel.value === 'yes');
   }
   function setInput(on, placeholder){
     input.disabled = !on;
@@ -793,6 +766,7 @@
   }
   function startWalk(){
     walk = { step:0, data:emptyData() };
+    hideVerify();
     talkDone.classList.remove('show');
     setChips([]);
     setInput(true, "Answer the avatar");
@@ -800,6 +774,7 @@
     input.focus();
   }
   function finish(){
+    hideVerify();
     var d = walk.data;
     walk = null;
     var lines = [
@@ -834,9 +809,10 @@
     bubble('visitor', text);
     var step = walk.step, d = walk.data;
     if(step === 6){
-      if(text === SEND){ finish(); return; }
+      if(text === SEND){ collectVerify(); finish(); return; }
       if(text === RESTART){
         walk = { step:0, data:emptyData() };
+        hideVerify();
         setChips([]);
         setInput(true, "Answer the avatar");
         bubble('avatar', promptFor(0, walk.data));
@@ -857,7 +833,7 @@
     if(step === 5) d.advertiseHow = (text === SKIP) ? "" : text;
     walk.step = step + 1;
     setChips(chipsFor(walk.step));
-    if(walk.step === 6) setInput(false, "Check it over \u2014 then tap Send my request");
+    if(walk.step === 6){ setInput(false, "Check it over \u2014 then tap Send my request"); showVerify(d); }
     bubble('avatar', promptFor(walk.step, d));
   }
   sendBtn.addEventListener('click', function(){
@@ -1060,7 +1036,7 @@
     rec.onerror = function(ev){
       if(!voice.on) return;
       if(ev && (ev.error === 'not-allowed' || ev.error === 'service-not-allowed')){
-        if(voice.auto){ /* enter-flow start refused: rest silently, the page stays exactly as it was */ voiceStop(''); return; }
+        if(voice.auto){ voiceStop("Microphone is off \u2014 typing your question here works just the same."); return; }
         bubble('avatar', "Your microphone is off, so I can't hear you \u2014 typing your question in the box above works just the same.");
         voiceStop("Microphone is off \u2014 typing your question above works just the same.");
         return;
