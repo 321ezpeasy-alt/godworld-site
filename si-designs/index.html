@@ -191,6 +191,13 @@
   .verify-panel p{margin:0 0 4px}
   .verify-panel label{display:block;font-size:13.5px;font-weight:700;margin:8px 0 4px;color:#d8edf9;text-align:left}
   .verify-panel input,.verify-panel select{width:100%;box-sizing:border-box;padding:9px 10px;border-radius:10px;border:1px solid rgba(216,237,249,.3);background:rgba(0,0,0,.25);color:#fff;font-size:15px}
+  .photo-panel{margin:2px 0;padding:14px;border:1px solid rgba(232,193,90,.4);border-radius:14px;background:rgba(232,193,90,.06);align-self:stretch;text-align:center}
+  .photo-panel .pp-title{font-weight:800;margin:0 0 4px}
+  .photo-panel .pp-sub{color:var(--muted);font-size:13.5px;margin:0 0 10px;line-height:1.5}
+  .photo-panel .pp-btn{display:inline-block;background:linear-gradient(180deg,var(--ice),var(--blue));color:#04101f;font-weight:800;font-size:15px;padding:11px 18px;border-radius:999px;cursor:pointer;border:none}
+  .photo-panel .pp-skip{display:inline-block;margin-left:8px;background:transparent;border:1px solid rgba(216,237,249,.4);color:#d8edf9;font-weight:700;font-size:14px;padding:10px 16px;border-radius:999px;cursor:pointer}
+  .photo-panel img.pp-thumb{display:block;margin:12px auto 0;width:96px;height:96px;object-fit:cover;border-radius:50%;border:2px solid rgba(232,193,90,.7)}
+  .photo-panel .pp-name{font-size:13.5px;color:#d8edf9;margin:8px 0 0}
 
   footer{max-width:640px;margin:0 auto;padding:52px 20px 46px;text-align:center}
   footer .fname{font-family:"Sora",sans-serif;font-size:18px;font-weight:700;margin:0}
@@ -635,12 +642,12 @@
   /* ---------- the walkthrough: six basics, by conversation ---------- */
   var walk = null;
   function emptyData(){
-    return { businessName:"", whatItDoes:"", email:"", phone:"", listContact:true, advertiseHow:"" };
+    return { businessName:"", whatItDoes:"", email:"", phone:"", listContact:true, advertiseHow:"", photoName:"" };
   }
   function chipsFor(step){
     if(step === 4) return [LYES, LNO];
     if(step === 5) return [SKIP];
-    if(step === 6) return [SEND, RESTART];
+    if(step === 7) return [SEND, RESTART];
     return [];
   }
   function promptFor(step, d){
@@ -650,9 +657,57 @@
       case 2: return "Where should your customers' requests reach you? Give me the email for the business.";
       case 3: return "And a phone number to go with it?";
       case 4: return "Should that email and number be listed on your site, out where customers can see them — or kept between you and S.I. Designs?";
-      case 5: return "Last one. How do you want to advertise — Google, Facebook, word of mouth, a sign on the truck? Or tap Skip for now.";
-      default: return "Here's what I gathered for " + d.businessName + ": " + d.whatItDoes + " Requests will reach " + d.email + " and " + d.phone + ", and that contact info will " + (d.listContact ? "be listed on the site" : "stay private — it comes to S.I. Designs only") + "." + (d.advertiseHow ? " Advertising: " + d.advertiseHow + "." : "") + " Here it is on screen — check it over and fix anything that needs fixing, then tap Send my request and it's in.";
+      case 5: return "How do you want to advertise — Google, Facebook, word of mouth, a sign on the truck? Or tap Skip for now.";
+      case 6: return "One last thing — your avatar. Upload a photo of yourself, or take a selfie right here: that photo is the face your avatar starts from when it introduces your business on your page. Tap the photo button below when you're ready — or say skip, and we will collect it right after your request instead.";
+      default: return "Here's what I gathered for " + d.businessName + ": " + d.whatItDoes + " Requests will reach " + d.email + " and " + d.phone + ", and that contact info will " + (d.listContact ? "be listed on the site" : "stay private — it comes to S.I. Designs only") + "." + (d.advertiseHow ? " Advertising: " + d.advertiseHow + "." : "") + (d.photoName ? " Your avatar photo is in: " + d.photoName + "." : " No photo yet — we will ask for your avatar photo as soon as this request comes in.") + " Here it is on screen — check it over and fix anything that needs fixing, then tap Send my request and it's in.";
     }
+  }
+  var SKIPPHOTO = "Skip the photo for now";
+  var photoPanel = null, photoFile = null;
+  function hidePhotoPanel(){ if(photoPanel && photoPanel.parentNode) photoPanel.parentNode.removeChild(photoPanel); photoPanel = null; }
+  function photoDone(){
+    if(!walk) return;
+    hidePhotoPanel();
+    walk.step = 7;
+    setInput(false, "Check it over — then tap Send my request");
+    showVerify(walk.data);
+    sayPrompt();
+  }
+  function showPhotoPanel(){
+    hidePhotoPanel();
+    photoPanel = document.createElement('div');
+    photoPanel.className = 'photo-panel'; photoPanel.id = 'photoPanel';
+    var t = document.createElement('p'); t.className = 'pp-title'; t.textContent = 'Your avatar photo';
+    var s = document.createElement('p'); s.className = 'pp-sub';
+    s.textContent = 'A photo of you — it becomes the face of the avatar that introduces your business. It stays on your device here; S.I. Designs collects the photo itself right after your request, and your request notes that it is coming.';
+    var inp = document.createElement('input');
+    inp.type = 'file'; inp.id = 'photoInput'; inp.accept = 'image/*'; inp.setAttribute('capture', 'user'); inp.style.display = 'none';
+    var lab = document.createElement('label');
+    lab.className = 'pp-btn'; lab.setAttribute('for', 'photoInput'); lab.textContent = '📸 Take or upload your photo';
+    var skip = document.createElement('button');
+    skip.type = 'button'; skip.className = 'pp-skip'; skip.textContent = 'Skip for now';
+    skip.addEventListener('click', function(){ walkAnswer(SKIPPHOTO); });
+    var name = document.createElement('p'); name.className = 'pp-name'; name.id = 'photoNameLine'; name.hidden = true;
+    inp.addEventListener('change', function(){
+      var f = inp.files && inp.files[0];
+      if(!f || !walk) return;
+      photoFile = f;
+      walk.data.photoName = f.name;
+      name.textContent = 'Got it: ' + f.name;
+      name.hidden = false;
+      try {
+        var img = document.createElement('img');
+        img.className = 'pp-thumb'; img.alt = 'Your avatar photo';
+        img.src = URL.createObjectURL(f);
+        photoPanel.appendChild(img);
+      } catch(e){}
+      bubble('avatar', "Got it — " + f.name + ". That's the face your avatar starts from.");
+      setTimeout(photoDone, 900);
+    });
+    photoPanel.appendChild(t); photoPanel.appendChild(s); photoPanel.appendChild(inp);
+    photoPanel.appendChild(lab); photoPanel.appendChild(skip); photoPanel.appendChild(name);
+    box.appendChild(photoPanel);
+    if(photoPanel.scrollIntoView) photoPanel.scrollIntoView({ block:'nearest', behavior:'smooth' });
   }
   var verifyPanel = null;
   function hideVerify(){ if(verifyPanel && verifyPanel.parentNode) verifyPanel.parentNode.removeChild(verifyPanel); verifyPanel = null; }
@@ -678,6 +733,9 @@
     sel.appendChild(o1); sel.appendChild(o2); sel.value = d.listContact ? 'yes' : 'no';
     verifyPanel.appendChild(lab); verifyPanel.appendChild(sel);
     vField('How you want to advertise', 'v-advertise', d.advertiseHow);
+    var pl = document.createElement('p'); pl.style.cssText = 'font-size:13.5px;color:#d8edf9;margin:10px 0 0';
+    pl.textContent = d.photoName ? ('Avatar photo: ' + d.photoName + ' — S.I. Designs collects the photo itself right after this request.') : 'Avatar photo: not yet — S.I. Designs will ask for it right after this request.';
+    verifyPanel.appendChild(pl);
     box.appendChild(verifyPanel);
     if(verifyPanel.scrollIntoView) verifyPanel.scrollIntoView({ block:'nearest', behavior:'smooth' });
   }
@@ -700,7 +758,8 @@
   }
   function startWalk(name){
     walk = { step:0, data:emptyData() };
-    hideVerify(); hideBump();
+    photoFile = null;
+    hideVerify(); hideBump(); hidePhotoPanel();
     talkDone.classList.remove('show');
     awaitingOpen = false;
     if(name){
@@ -717,14 +776,24 @@
     if(!text || !walk) return;
     bubble('visitor', text);
     var step = walk.step, d = walk.data;
-    if(step === 6){
+    if(step === 7){
       if(text === SEND){ collectVerify(); showBump(); return; }
       if(text === RESTART){
         walk = { step:0, data:emptyData() };
-        hideVerify();
+        photoFile = null;
+        hideVerify(); hidePhotoPanel();
         setChips([]);
         setInput(true, "Answer the avatar");
         sayPrompt();
+      }
+      return;
+    }
+    if(step === 6){
+      if(text === SKIPPHOTO || /^skip\b/i.test(text)){
+        bubble('avatar', "No problem — we will ask for your avatar photo as soon as your request comes in.");
+        photoDone();
+      } else {
+        say("That step is the photo button below — tap it to take or upload your photo, or say skip and we will collect it after.");
       }
       return;
     }
@@ -741,7 +810,8 @@
     if(step === 4) d.listContact = !(text === LNO || text.toLowerCase().indexOf('no') === 0);
     if(step === 5) d.advertiseHow = (text === SKIP) ? "" : text;
     walk.step = step + 1;
-    if(walk.step === 6){ setInput(false, "Check it over — then tap Send my request"); showVerify(d); }
+    if(walk.step === 6){ setChips([], walkAnswer); showPhotoPanel(); }
+    if(walk.step === 7){ setInput(false, "Check it over — then tap Send my request"); showVerify(d); }
     sayPrompt();
   }
 
@@ -784,7 +854,8 @@
       'Email address: ' + d.email,
       'Phone number: ' + d.phone,
       'List that contact info on the site: ' + (d.listContact ? 'Yes — list it' : 'No — keep it private'),
-      'How they want to advertise: ' + (d.advertiseHow || '(skipped for now)')
+      'How they want to advertise: ' + (d.advertiseHow || '(skipped for now)'),
+      'Avatar photo: ' + (d.photoName ? ('Taken in the conversation — file name: ' + d.photoName + '. The photo itself is collected by S.I. Designs right after this request (reply to the confirmation with the photo attached).') : 'Not yet — S.I. Designs will ask for the avatar photo right after this request.')
     ];
     var a = document.createElement('a');
     a.href = 'mailto:' + EMAIL + '?subject=' +
@@ -794,7 +865,7 @@
     a.click();
     document.body.removeChild(a);
     talkDone.classList.add('show');
-    say("Done — the request for " + d.businessName + " is ready in your mail app, addressed to S.I. Designs. Press send there and it's in. Your choice is on the request: " + choiceLabel + ". Idea today, live by tomorrow — that's the way this works.");
+    say("Done — the request for " + d.businessName + " is ready in your mail app, addressed to S.I. Designs. Press send there and it's in. Your choice is on the request: " + choiceLabel + "." + (d.photoName ? "" : " And we will ask for your avatar photo as soon as it lands.") + " Idea today, live by tomorrow — that's the way this works.");
     setChips([START], handleIdle);
     setInput(false, "Tap Start my website request to go again");
   }
@@ -900,7 +971,7 @@
       return;
     }
     if(walk){
-      if(walk.step === 6){
+      if(walk.step === 7){
         if(/\bsend\b/i.test(heard)){ bubble('visitor', heard); collectVerify(); showBump(); }
         else if(/\b(start over|restart)\b/i.test(heard)){ walkAnswer(RESTART); }
         else { bubble('visitor', heard); say("Check it over on screen — when you're ready, just say send."); }
