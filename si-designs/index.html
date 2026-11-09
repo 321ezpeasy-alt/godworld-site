@@ -229,6 +229,9 @@
   /* ---------- ASK ME ANYTHING (free questions, answered on-page) ---------- */
   .ask .bubble.typing{color:var(--muted);font-style:italic}
   .ask-start{margin-top:14px}
+  .ask-callrow{margin-top:12px}
+  .ask-callrow .btn-call[aria-pressed="true"]{background:#7a1f1f}
+  .ask-voice-note{margin-top:8px;color:var(--muted);font-size:15px}
 
   @media (prefers-reduced-motion: reduce){
     *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
@@ -323,6 +326,10 @@
     <div class="chat-row">
       <input id="askInput" type="text" placeholder="Ask theTruth AI a question" autocomplete="off" />
       <button class="btn-primary" id="askSend" type="button">Ask</button>
+    </div>
+    <div class="ask-callrow">
+      <button class="btn-primary btn-call" id="askCall" type="button" aria-pressed="false">\u260e Talk to theTruth AI</button>
+      <p class="ask-voice-note" id="askVoiceNote" hidden></p>
     </div>
   </section>
 
@@ -802,6 +809,8 @@
   var box = document.getElementById('askBox');
   var input = document.getElementById('askInput');
   var sendBtn = document.getElementById('askSend');
+  var callBtn = document.getElementById('askCall');
+  var voiceNote = document.getElementById('askVoiceNote');
   if(!box || !input || !sendBtn) return;
 
   var PHONE = "(573) 587-9842";
@@ -823,14 +832,15 @@
     if(d.scrollIntoView) d.scrollIntoView({ block:'nearest', behavior:'smooth' });
     return d;
   }
-  function speak(text){
+  function speak(text, onend){
     try {
-      if(!('speechSynthesis' in window)) return;
+      if(!('speechSynthesis' in window)){ if(onend) onend(); return; }
       window.speechSynthesis.cancel();
       var u = new SpeechSynthesisUtterance(text);
       u.rate = 1.03;
+      if(onend){ u.onend = onend; u.onerror = onend; }
       window.speechSynthesis.speak(u);
-    } catch(e){}
+    } catch(e){ if(onend) onend(); }
   }
   function startWalkthrough(){
     var talkH = document.getElementById('talk-h');
@@ -848,7 +858,7 @@
   var RULES = [
     { id:'price',
       re:/\b(price|pricing|cost|costs|charge|charges|fee|fees|how much|expensive|cheap|afford|budget)\b/,
-      reply:"One price, no tiers: a $100 website. That is $50 for the consultation and the build, and $50 a year for the subscription. Hosting and maintenance are free for as long as you don\u2019t change anything." },
+      reply:"One price: one hundred dollars gets your website built and live by tomorrow, hosted right here on godworld.org. Your subscription runs fifty dollars a year, and hosting and maintenance are free for as long as you don\u2019t change anything." },
     { id:'speed',
       re:/\b(how (fast|long|quick|quickly|soon)|turnaround|how long does it take|ready by|deadline|timeline)\b/,
       reply:"Fast. Bring me your idea today and your site is live by tomorrow, hosted right here on godworld.org. To get rolling I ask you six short questions \u2014 say the word and we will start." },
@@ -866,7 +876,7 @@
       reply:"Every site can have an avatar out front \u2014 a digital twin of the owner \u2014 talking with customers the way I am talking with you now. I am theTruth AI, Henry\u2019s digital twin. The owner pre-programs me by prompt, and the super intelligence does the heavy lifting on the website, code and deployment included." },
     { id:'included',
       re:/\b(what (do i|does it|would i) get|what'?s included|included|include|services|what do you (do|build|offer|make)|package|kind of (site|website))\b/,
-      reply:"Here is what you get: a website built for your business, hosted on godworld.org, live by tomorrow. It is $100 \u2014 $50 for the consultation and build, $50 a year for the subscription \u2014 hosting and maintenance free while nothing changes, and your Square store can be folded in so you can take payments online." },
+      reply:"Here is what you get: a website built for your business, hosted on godworld.org, live by tomorrow. It is one price \u2014 one hundred dollars \u2014 and your subscription runs fifty dollars a year, with hosting and maintenance free while nothing changes, and your Square store can be folded in so you can take payments online." },
     { id:'contact',
       re:/\b(phone|call (you|me|them|henry)|number|e-?mail|contact|reach (you|out|henry)|talk to (a )?(human|person|someone|henry)|real person)\b/,
       reply:"You can reach S.I. Designs at " + PHONE + ", or by email at " + EMAIL + ". Or start right here \u2014 say the word and I will take your six answers now." },
@@ -893,11 +903,7 @@
     return { reply: FALLBACK };
   }
 
-  function ask(){
-    var text = input.value.trim();
-    if(!text || sendBtn.disabled) return;
-    input.value = '';
-    sendBtn.disabled = true;
+  function handleQuestion(text, done){
     bubble('visitor', text);
     var typing = bubble('avatar', 'One moment\u2026');
     typing.classList.add('typing');
@@ -905,16 +911,132 @@
       typing.remove();
       var a = answerFor(text);
       bubble('avatar', a.reply);
-      speak(a.reply);
+      speak(a.reply, function(){ if(done) done(a); });
       if(a.action === 'start'){ startWalkthrough(); }
+    }, 350);
+  }
+
+  function ask(){
+    var text = input.value.trim();
+    if(!text || sendBtn.disabled) return;
+    input.value = '';
+    sendBtn.disabled = true;
+    handleQuestion(text, function(){
       sendBtn.disabled = false;
       input.focus();
-    }, 350);
+    });
   }
   sendBtn.addEventListener('click', ask);
   input.addEventListener('keydown', function(e){
     if(e.key === 'Enter'){ e.preventDefault(); ask(); }
   });
+  /* ------- VOICE CALL: tap the call button and talk with theTruth AI -------
+     Browser speech recognition hears the visitor, the SAME on-page engine
+     answers, speech synthesis speaks the answer back, and the loop listens
+     again until the visitor ends the call. No server, no outside calls.
+     Where the browser has no speech recognition or the mic is off, the
+     typed ask box right above keeps working \u2014 never a dead end. */
+  var voice = { on:false, rec:null, missed:0 };
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+
+  function voiceNoteSay(msg){
+    if(!voiceNote) return;
+    if(msg){ voiceNote.textContent = msg; voiceNote.hidden = false; }
+    else { voiceNote.hidden = true; voiceNote.textContent = ''; }
+  }
+  function voiceUI(){
+    if(!callBtn) return;
+    callBtn.setAttribute('aria-pressed', voice.on ? 'true' : 'false');
+    callBtn.textContent = voice.on ? '\u260e End the call' : '\u260e Talk to theTruth AI';
+  }
+  function voiceStop(sayNote){
+    voice.on = false;
+    if(voice.rec){ try { voice.rec.onresult = null; voice.rec.onerror = null; voice.rec.onend = null; voice.rec.abort(); } catch(e){} voice.rec = null; }
+    try { window.speechSynthesis.cancel(); } catch(e){}
+    voiceUI();
+    if(sayNote) voiceNoteSay(sayNote);
+  }
+  function voiceListen(){
+    if(!voice.on || !SR) return;
+    var rec;
+    try { rec = new SR(); } catch(e){ voiceStop("Voice did not start on this browser \u2014 typing your question above works just the same."); return; }
+    voice.rec = rec;
+    rec.lang = 'en-US';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = function(ev){
+      var heard = '';
+      try { heard = ev.results[0][0].transcript || ''; } catch(e){}
+      heard = heard.trim();
+      if(!heard){ voiceMissed(); return; }
+      voice.missed = 0;
+      if(/\b(goodbye|good bye|bye|stop|end( the)? call|hang up|that'?s all|thank you|thanks)\b/i.test(heard) && heard.length < 60){
+        bubble('visitor', heard);
+        var bye = "Good talking with you \u2014 when you are ready, say the word here and I will start your website request, or call S.I. Designs at " + PHONE + ".";
+        bubble('avatar', bye);
+        speak(bye);
+        voiceStop("Call ended \u2014 the typed ask box above still works any time.");
+        return;
+      }
+      handleQuestion(heard, function(a){
+        if(a.action === 'start'){ voiceStop("Your website request is open above \u2014 answer my six questions there and I will read it all back."); return; }
+        voiceListen();
+      });
+    };
+    rec.onerror = function(ev){
+      if(!voice.on) return;
+      if(ev && (ev.error === 'not-allowed' || ev.error === 'service-not-allowed')){
+        bubble('avatar', "Your microphone is off, so I can't hear you \u2014 typing your question in the box above works just the same.");
+        voiceStop("Microphone is off \u2014 typing your question above works just the same.");
+        return;
+      }
+      if(ev && ev.error === 'aborted') return;
+      voiceMissed();
+    };
+    rec.onend = function(){
+      if(voice.on && voice.rec === rec && !window.speechSynthesis.speaking && !window.speechSynthesis.pending){
+        /* the browser stopped listening on its own \u2014 pick the loop back up */
+        try { rec.start(); } catch(e){}
+      }
+    };
+    try { rec.start(); } catch(e){}
+  }
+  function voiceMissed(){
+    if(!voice.on) return;
+    voice.missed++;
+    if(voice.missed >= 2){
+      var rest = "I didn't catch that \u2014 let's rest the call there. Type your question in the box above and I will answer right away.";
+      bubble('avatar', rest);
+      speak(rest);
+      voiceStop("The call is resting \u2014 typing your question above works just the same.");
+      return;
+    }
+    var again = "I didn't catch that \u2014 say it once more, I'm listening.";
+    bubble('avatar', again);
+    speak(again, function(){ voiceListen(); });
+  }
+  function voiceStart(){
+    if(!SR){
+      bubble('avatar', "This browser doesn't carry live voice, so I can't hear you out loud \u2014 typing your question in the box above works just the same, and I will answer right here.");
+      voiceNoteSay("No live voice in this browser \u2014 typing your question above works just the same.");
+      input.focus();
+      return;
+    }
+    voice.on = true;
+    voice.missed = 0;
+    voiceNoteSay('');
+    voiceUI();
+    var greet = "Hi, I'm theTruth AI. Ask me anything about getting your website built.";
+    bubble('avatar', greet);
+    speak(greet, function(){ voiceListen(); });
+  }
+  if(callBtn){
+    callBtn.addEventListener('click', function(){
+      if(voice.on){ voiceStop("Call ended \u2014 the typed ask box above still works any time."); }
+      else { voiceStart(); }
+    });
+  }
+
   bubble('avatar', "I'm theTruth AI \u2014 ask me anything about getting your website built. Price, timing, how it works, taking payments \u2014 or just say \u201clet's start\u201d and I'll walk you through it.");
 })();
 </script>
