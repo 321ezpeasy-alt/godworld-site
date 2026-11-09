@@ -936,7 +936,7 @@
      again until the visitor ends the call. No server, no outside calls.
      Where the browser has no speech recognition or the mic is off, the
      typed ask box right above keeps working \u2014 never a dead end. */
-  var voice = { on:false, rec:null, missed:0 };
+  var voice = { on:false, rec:null, missed:0, auto:false };
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
   function voiceNoteSay(msg){
@@ -951,6 +951,7 @@
   }
   function voiceStop(sayNote){
     voice.on = false;
+    voice.auto = false;
     if(voice.rec){ try { voice.rec.onresult = null; voice.rec.onerror = null; voice.rec.onend = null; voice.rec.abort(); } catch(e){} voice.rec = null; }
     try { window.speechSynthesis.cancel(); } catch(e){}
     voiceUI();
@@ -986,10 +987,12 @@
     rec.onerror = function(ev){
       if(!voice.on) return;
       if(ev && (ev.error === 'not-allowed' || ev.error === 'service-not-allowed')){
+        if(voice.auto){ /* enter-flow start refused: rest silently, the page stays exactly as it was */ voiceStop(''); return; }
         bubble('avatar', "Your microphone is off, so I can't hear you \u2014 typing your question in the box above works just the same.");
         voiceStop("Microphone is off \u2014 typing your question above works just the same.");
         return;
       }
+      if(ev && ev.error === 'audio-capture' && voice.auto){ voiceStop(''); return; }
       if(ev && ev.error === 'aborted') return;
       voiceMissed();
     };
@@ -1015,25 +1018,87 @@
     bubble('avatar', again);
     speak(again, function(){ voiceListen(); });
   }
-  function voiceStart(){
+  function voiceStart(auto){
     if(!SR){
+      if(auto) return; /* enter flow with no recognition: stay exactly as the page was */
       bubble('avatar', "This browser doesn't carry live voice, so I can't hear you out loud \u2014 typing your question in the box above works just the same, and I will answer right here.");
       voiceNoteSay("No live voice in this browser \u2014 typing your question above works just the same.");
       input.focus();
       return;
     }
     voice.on = true;
+    voice.auto = !!auto;
     voice.missed = 0;
     voiceNoteSay('');
     voiceUI();
-    var greet = "Hi, I'm theTruth AI. Ask me anything about getting your website built.";
+    var greet = auto ? "Ask me anything \u2014 just talk to me."
+                     : "Hi, I'm theTruth AI. Ask me anything about getting your website built.";
     bubble('avatar', greet);
-    speak(greet, function(){ voiceListen(); });
+    var listened = false;
+    speak(greet, function(){ listened = true; voiceListen(); });
+    if(auto){
+      /* If the invite utterance never reports its end (some browsers hold
+         speech synthesis until a further interaction), still open the
+         listen rather than leaving the call hanging. */
+      setTimeout(function(){ if(voice.on && voice.auto && !listened) voiceListen(); }, 6000);
+    }
   }
   if(callBtn){
     callBtn.addEventListener('click', function(){
       if(voice.on){ voiceStop("Call ended \u2014 the typed ask box above still works any time."); }
       else { voiceStart(); }
+    });
+  }
+
+  /* ------- FIRST TOUCH BRINGS THE CALL ON -------
+     Henry's flow: the visitor's first touch passes the enter gate, the
+     spoken greeting plays, and the moment it completes the avatar
+     invites them out loud to talk and the voice loop above starts
+     listening \u2014 no second tap. The Talk button stays as the manual
+     way in, and every safeguard above applies unchanged.
+     Recognition START pattern: the recognizer is first STARTED inside
+     the enter tap's own call stack (primeRecognition below). Chrome
+     and Android credit a microphone request that begins inside a user
+     gesture; the tap's user activation is long gone by the time the
+     roughly minute-long greeting ends, so a cold start() at
+     greeting-end can be refused. With the grant secured at the tap,
+     the greeting-end listen (voiceStart(true) -> voiceListen) starts
+     cleanly. The priming session is never read from and is stopped
+     before the invite; if anything in this flow fails, nothing shows
+     and the page rests exactly as it did before \u2014 greeting, then
+     idle, Talk button waiting. */
+  var enterFlow = { primed:false, primeRec:null, invited:false };
+  function stopPrime(){
+    var pr = enterFlow.primeRec; enterFlow.primeRec = null;
+    if(pr){ pr.onresult = null; pr.onerror = null; pr.onend = null; try { pr.abort(); } catch(e){} }
+  }
+  function primeRecognition(){
+    if(enterFlow.primed || !SR) return;
+    enterFlow.primed = true;
+    var pr;
+    try { pr = new SR(); } catch(e){ return; }
+    enterFlow.primeRec = pr;
+    pr.onresult = function(){};
+    pr.onerror = function(){ stopPrime(); };
+    pr.onend = function(){ if(enterFlow.primeRec === pr) enterFlow.primeRec = null; };
+    try { pr.start(); } catch(e){ stopPrime(); return; }
+    setTimeout(function(){ if(enterFlow.primeRec === pr) stopPrime(); }, 1500);
+  }
+  var gateEl = document.getElementById('gate');
+  if(gateEl) gateEl.addEventListener('click', primeRecognition);
+  ['soundChip', 'playBtn', 'avatarBtn'].forEach(function(id){
+    var el = document.getElementById(id);
+    if(el) el.addEventListener('click', primeRecognition);
+  });
+  document.addEventListener('pointerdown', primeRecognition);
+  var welcomeAudio = document.getElementById('welcomeAudio');
+  if(welcomeAudio){
+    welcomeAudio.addEventListener('ended', function(){
+      if(enterFlow.invited || voice.on || !SR) return;
+      if(welcomeAudio.muted) return; /* a muted autoplay run \u2014 nobody heard the greeting */
+      enterFlow.invited = true;
+      stopPrime();
+      voiceStart(true);
     });
   }
 
