@@ -15,6 +15,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.com"
+          if [ ! -f index-upload-tmp.html ]; then
+            git mv -f index.html index-upload-tmp.html
+            git commit -m "Stage new root index as index-upload-tmp.html"
+            git push
+          fi
           git mv -f index-upload-tmp.html index.html
           git commit -m "Place new root index"
           git push
