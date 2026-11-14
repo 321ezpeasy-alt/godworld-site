@@ -331,9 +331,130 @@ function stopSpeaking() {
   setMood('idle');
 }
 
+// --- Scripted mode (total brain outage) --------------------------------------
+// If the brain cannot be reached at all — or answers with only the bare
+// apology — the avatar switches to this built-in script: the same grounded
+// consultation the server-side fallback speaks (price, process, timeline,
+// agent, payment), plus the six-question intake, one question at a time.
+// Every fact here matches the server's ground truth; the script never asks
+// for a password, a card number, or an API key.
+let scriptedMode = false;
+const scriptedState = { step: -1, awaitingStart: false };
+const INTAKE_QUESTIONS = [
+  "What is your email address? That's how S.I. Designs will reach you about your site.",
+  "What is your business or company name, exactly as you want it to appear on your website?",
+  "In a sentence or two, what does your business do, and who is it for?",
+  "What phone number should we use? You can leave this blank if you don't want to share one yet.",
+  "Should we list your contact information on the website, so visitors can see it? Just say yes or no.",
+  "How do you want to advertise and be found? For example: search, social media, word of mouth, or the site itself.",
+];
+function scriptedLines(message) {
+  const raw = String(message || '').trim();
+  const t = ' ' + raw.toLowerCase().replace(/\s+/g, ' ') + ' ';
+  const has = (...ws) => ws.some((w) => t.includes(w));
+  const L = (text, mood) => ({ text, mood: mood || 'talking' });
+  if (scriptedState.step >= 0) {
+    if (has(' never mind ', ' stop ', ' quit ', ' cancel ', ' forget it ')) {
+      scriptedState.step = -1;
+      return [L("No problem — we'll stop there. You can restart the consultation any time by just saying so.")];
+    }
+    scriptedState.step += 1;
+    if (scriptedState.step < INTAKE_QUESTIONS.length) return [L(INTAKE_QUESTIONS[scriptedState.step])];
+    scriptedState.step = -1;
+    return [
+      L("That's everything I need — thank you. Henry reviews every consultation personally, and your website build starts from exactly what you've told me.", 'smiling'),
+      L("When your site is ready to turn on, the activation is the one-time hundred dollars — the button is at the very bottom of this page.", 'smiling'),
+    ];
+  }
+  if (scriptedState.awaitingStart) {
+    if (has(' yes ', ' yeah ', ' yep ', ' sure ', ' okay ', ' ok ', ' please ', " let's ", ' go ')) {
+      scriptedState.awaitingStart = false;
+      scriptedState.step = 0;
+      return [
+        L("Wonderful — let's start your free consultation. I'll ask you six short questions, one at a time, and your website gets built from exactly what you tell me.", 'smiling'),
+        L(INTAKE_QUESTIONS[0]),
+      ];
+    }
+    if (has(' no ', ' not now ', ' later ', ' maybe ')) {
+      scriptedState.awaitingStart = false;
+      return [L("Of course — no pressure at all. Your first site is free whenever you're ready, and I'll be right here.")];
+    }
+    scriptedState.awaitingStart = false;
+  }
+  if (has('consultation', 'get started', 'sign up', 'sign me up', 'start my', 'build my', 'build me', 'i want a website', 'i need a website', 'want a storefront', 'need a storefront')) {
+    scriptedState.step = 0;
+    return [
+      L("Wonderful — let's start your free consultation. I'll ask you six short questions, one at a time, and your website gets built from exactly what you tell me.", 'smiling'),
+      L(INTAKE_QUESTIONS[0]),
+    ];
+  }
+  if (has('refund', 'money back')) return [
+    L("The hundred dollar pre-launch activation is fully refundable until your website is built and launched."),
+    L("You are reserving your place in the pre-launch, first come, first served."),
+  ];
+  if (has('price', 'cost', 'how much', 'fee', 'charge', 'subscription', 'monthly')) return [
+    L("Your first website is free — a static site with your business information, live on godworld.org."),
+    L("Turning on the full interactive version, with an avatar like me talking to your customers, is a one-time activation of one hundred dollars. It is not a subscription — no tiers, no monthly fees."),
+    L("And hosting and maintenance stay free as long as your site stays as it is."),
+  ];
+  if (has('how it works', 'how does it work', 'process', 'steps', 'what happens', 'how do i', 'how do we')) return [
+    L("Here is how it works. First, a consultation — you are shown the active version of your own website, live and talking, before you pay anything, and you can edit the avatar's look and sound."),
+    L("Your first static site is free. When you are ready, the hundred dollar one-time activation turns on the interactive version."),
+    L("Then you connect your own Stripe through a link we generate, and you create your own Muse business agent with your business email — we walk you through it one step at a time."),
+  ];
+  if (has('when', 'timeline', 'launch', 'ready', 'how long', 'january')) return [
+    L("This is the pre-launch. The interactive version launches publicly in January 2027, first come, first served."),
+    L("Your free site can start right away with a consultation — we can begin whenever you are ready."),
+  ];
+  if (has('who are you', 'your name', 'who is henry', 'henry', 'thetruth', 'the truth')) return [
+    L("Hi, I'm theTruth AI, the digital twin of Henry theTruth Kennemore, founder of godworld.org.", 'smiling'),
+    L("Henry is the founder of God World dot org. I'm his digital twin, and I'm the standard storefront representative for S.I. Designs.", 'smiling'),
+  ];
+  if (has('agent', 'my own ai', 'business agent', 'briefing')) return [
+    L("When you activate, you get two things working together: the storefront avatar your customers talk to, and your own Muse business agent, tied to your business email."),
+    L("Your agent is yours — it gives you your briefings and runs your store with you. Customers never use our keys; you only ever receive links."),
+  ];
+  if (has('stripe', 'square', 'pay', 'payment', 'card', 'checkout')) return [
+    L("The activation is paid through Stripe — the button at the very bottom of this page. Your card is entered on Stripe's own secure page, never on this site, and I will never ask you for a card number."),
+    L("For your own store's sales, you connect your own Stripe through a connect link we generate, so your money lands in your account."),
+  ];
+  if (has('what do i get', 'included', 'include', 'features', 'package', 'offer')) return [
+    L("You get a one-page storefront on godworld.org with an animated avatar that greets your visitors, answers questions, and points them to where your business transacts."),
+    L("After activation, that avatar runs on a live brain like mine, and you get your own Muse business agent for briefings and updates."),
+  ];
+  if (has('contact', 'talk to a human', 'real person', 'reach')) return [
+    L("You're talking to the right place — everything starts right here, in this conversation."),
+    L("If you'd like, say the word and I'll begin your free consultation. Henry reviews every consultation personally."),
+  ];
+  if (has('thank', 'bye', 'goodbye', 'see you')) return [
+    L("You're welcome. It was a pleasure talking with you.", 'smiling'),
+    L("Whenever you're ready to start your free site, just say the word.", 'smiling'),
+  ];
+  if (/^\W*(hi|hello|hey|howdy|good morning|good afternoon|good evening)\b/.test(t) || raw.length <= 3) {
+    scriptedState.awaitingStart = true;
+    return [
+      L("Hi, I'm theTruth AI, the digital twin of Henry theTruth Kennemore, founder of godworld.org.", 'smiling'),
+      L("I build conversational avatar storefronts for small businesses — your first website is free, and turning on the full interactive version is a one-time hundred dollar activation.", 'smiling'),
+      L("Would you like to start your free consultation now? Just say yes, and we'll begin.", 'smiling'),
+    ];
+  }
+  scriptedState.awaitingStart = true;
+  return [
+    L("I want to give you exactly the right answer on that one, so let me stick to what I know best: I build avatar storefronts for small businesses, the first site is free, and activation is a one-time hundred dollars."),
+    L("Would you like to start your free consultation? Just say yes, and I'll ask you six short questions."),
+  ];
+}
+function answerScripted(message) {
+  for (const line of scriptedLines(message)) {
+    speechQueue.push({ text: line.text, mood: line.mood || 'talking' });
+  }
+  drainSpeechQueue();
+}
+
 // --- Conversation -----------------------------------------------------------
 async function sendChat(message) {
   stopSpeaking();
+  if (scriptedMode) { answerScripted(message); return; }
   streamController = new AbortController();
   replyMood = 'talking'; // a reply is in progress; sentence/done lines refine it
   try {
@@ -350,6 +471,8 @@ async function sendChat(message) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let firstSentence = true;
+    let tookOver = false;
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -362,17 +485,30 @@ async function sendChat(message) {
         try { event = JSON.parse(line); } catch { continue; }
         if (event.type === 'meta' && event.sessionId) sessionId = event.sessionId;
         if (event.type === 'sentence' && event.text) {
+          if (firstSentence && event.text.includes('lost my train of thought')) {
+            // The brain is out and only the bare apology came back —
+            // switch to the built-in script and answer for real.
+            scriptedMode = true;
+            tookOver = true;
+            answerScripted(message);
+            break;
+          }
+          firstSentence = false;
           replyMood = event.mood || replyMood;
           speechQueue.push({ text: event.text, mood: event.mood || 'talking' });
           drainSpeechQueue();
         }
         if (event.type === 'done' && event.mood) replyMood = event.mood;
       }
+      if (tookOver) break;
     }
   } catch (err) {
     if (err.name === 'AbortError') return; // barged in — silence is correct
-    speechQueue.push({ text: BRAIN_DOWN_LINE, mood: 'talking' });
-    drainSpeechQueue();
+    if (!tookOver) {
+      // Brain unreachable — switch to the built-in script and answer anyway.
+      scriptedMode = true;
+      answerScripted(message);
+    }
   } finally {
     streamController = null;
   }
