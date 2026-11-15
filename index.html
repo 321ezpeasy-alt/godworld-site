@@ -320,6 +320,45 @@
             <span class="p-sub">Sites built for other businesses</span>
           </a>
         </nav>
+        <style>
+          #searchFront { margin: 26px auto 8px; max-width: 560px; padding: 20px 18px 16px;
+            background: rgba(32,28,20,0.92); border-radius: 18px; color: #f3ecd9;
+            text-align: center; box-shadow: 0 14px 34px rgba(0,0,0,0.35); }
+          #searchFront .search-title { font-family: "Iowan Old","Palatino Linotype",Palatino,Georgia,serif;
+            font-size: clamp(21px,4.6vw,27px); font-weight: 600; margin: 0 0 6px; color: #f3ecd9; }
+          #searchFront .search-sub { margin: 0 0 14px; font-size: 14.5px; line-height: 1.45; color: rgba(243,236,217,0.82); }
+          #searchFront .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 0 0 14px; }
+          #searchFront .chip { appearance: none; border: 1px solid rgba(243,236,217,0.45); background: transparent;
+            color: #f3ecd9; border-radius: 999px; padding: 9px 14px; font-size: 14px; cursor: pointer; }
+          #searchFront .chip:hover, #searchFront .chip:focus-visible { background: rgba(243,236,217,0.14); }
+          #askForm { display: flex; gap: 8px; justify-content: center; }
+          #askInput { flex: 1 1 auto; min-width: 0; border-radius: 999px; border: 1px solid rgba(243,236,217,0.4);
+            background: rgba(255,255,255,0.08); color: #f3ecd9; padding: 11px 16px; font-size: 15px; }
+          #askInput::placeholder { color: rgba(243,236,217,0.55); }
+          #askBtn, #micBtn { appearance: none; border: none; border-radius: 999px; padding: 11px 18px;
+            font-size: 15px; font-weight: 600; cursor: pointer; background: #f3ecd9; color: #201c14; }
+          #micBtn { padding: 11px 13px; }
+          #micBtn.listening { background: #c8452c; color: #fff; }
+          #answerLine { margin: 14px 2px 2px; font-size: 15.5px; line-height: 1.5; color: #f3ecd9;
+            min-height: 1.5em; text-align: left; }
+          #answerLine:empty { min-height: 0; margin-top: 0; }
+        </style>
+        <section id="searchFront" aria-label="Re-Search AI — ask theTruth AI">
+          <h2 class="search-title">Re-Search AI</h2>
+          <p class="search-sub">Ask me anything. Every answer is verified through the Research AI Protocol before I speak it — we're not your father's Google.</p>
+          <div class="chips">
+            <button type="button" class="chip" data-q="I want a website built for my business" data-pop="pop-si">Build my business a website — first one free</button>
+            <button type="button" class="chip" data-q="Tell me about the BALANCE book" data-pop="pop-bal">The BALANCE book — $30</button>
+            <button type="button" class="chip" data-q="Tell me about the Archangel 8 TriPhone" data-pop="pop-tri">Archangel 8 TriPhone — $750</button>
+          </div>
+          <form id="askForm">
+            <input id="askInput" type="text" placeholder="Ask theTruth AI anything…" autocomplete="off" aria-label="Ask theTruth AI anything" />
+            <button type="submit" id="askBtn">Ask</button>
+            <button type="button" id="micBtn" aria-label="Ask by voice">&#127908;</button>
+          </form>
+          <p id="answerLine" aria-live="polite"></p>
+        </section>
+
         <section id="portfolio" hidden aria-label="Portfolio">
           <h2 class="folio-title">Portfolio</h2>
           <a class="folio-card" href="https://godworld.org/m3d/">
@@ -362,6 +401,7 @@
         player.preload = "auto";
         var actx = null;
         var started = false;
+        var stopped = false;
 
         function getCtx() {
           if (actx) return actx;
@@ -487,7 +527,7 @@
           }
           var i = 0;
           function next() {
-            if (i >= CLIPS.length) return;
+            if (stopped || i >= CLIPS.length) return;
             var clip = CLIPS[i++];
             player.src = clip.src;
             if (clip.pop) showPopup(clip.pop);
@@ -508,7 +548,288 @@
         }
 
         window.__lobbyStart = runShow;
+        function stopShow() {
+          stopped = true;
+          stopMouth();
+          try {
+            player.pause();
+            player.removeAttribute("src");
+            player.load();
+          } catch (e) {}
+        }
+        window.__lobbyStopShow = stopShow;
       })();
+    </script>
+      <script>
+      // Re-Search AI front door: live conversation with theTruth AI.
+      // Same brain the S.I. Designs page talks to — draft, verify, speak —
+      // through the Worker. If the brain cannot be reached, a grounded
+      // built-in script answers instead; it never invents facts.
+      (function () {
+        "use strict";
+        var CHAT_URL = "https://godworld-storefront.321ezpeasy.workers.dev/api/chat";
+        var mouth = document.getElementById("mouthImg");
+        var answerLine = document.getElementById("answerLine");
+        var input = document.getElementById("askInput");
+        var form = document.getElementById("askForm");
+        var micBtn = document.getElementById("micBtn");
+        var reduceMotion = !!(window.matchMedia &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+        var sessionId = null;
+        var scriptedMode = false;
+        var interacted = false;
+
+        // --- Speaking: sentence queue + mouth envelope while TTS talks ---
+        var queue = [];
+        var draining = false;
+        var speaking = false;
+        var mSmooth = 0, mTarget = 0, mNext = 0, mRaf = null;
+
+        function mouthFrame(now) {
+          if (speaking) {
+            if (now >= mNext) {
+              mTarget = Math.random() < 0.18 ? 0 : 0.25 + Math.random() * 0.7;
+              mNext = now + 80 + Math.random() * 110;
+            }
+          } else {
+            mTarget = 0;
+          }
+          mSmooth += (mTarget - mSmooth) * (mTarget > mSmooth ? 0.55 : 0.3);
+          if (!speaking && mSmooth < 0.01) {
+            mSmooth = 0;
+            if (mouth) mouth.style.transform = "translateY(0px)";
+            mRaf = null;
+            return;
+          }
+          if (mouth && !reduceMotion) {
+            mouth.style.transform = "translateY(" + (mSmooth * 7).toFixed(2) + "px)";
+          }
+          mRaf = requestAnimationFrame(mouthFrame);
+        }
+        function mouthStart() {
+          if (mRaf === null) mRaf = requestAnimationFrame(mouthFrame);
+        }
+        function speak(text) {
+          return new Promise(function (resolve) {
+            if (!("speechSynthesis" in window)) { resolve(); return; }
+            var u = new SpeechSynthesisUtterance(text);
+            u.onend = resolve;
+            u.onerror = resolve;
+            window.speechSynthesis.speak(u);
+          });
+        }
+        function showText(text) {
+          if (!answerLine) return;
+          answerLine.textContent = answerLine.textContent
+            ? answerLine.textContent + " " + text : text;
+        }
+        function drain() {
+          if (draining) return;
+          draining = true;
+          speaking = true;
+          mouthStart();
+          (function step() {
+            if (!queue.length) {
+              speaking = false;
+              draining = false;
+              return;
+            }
+            var item = queue.shift();
+            showText(item.text);
+            speak(item.text).then(step);
+          })();
+        }
+        function say(text) { queue.push({ text: text }); drain(); }
+        function stopSpeaking() {
+          queue.length = 0;
+          if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+          speaking = false;
+        }
+
+        // --- Grounded scripted fallback (brain unreachable) --------------
+        function scriptedLines(message) {
+          var raw = String(message || "").trim();
+          var t = " " + raw.toLowerCase().replace(/\s+/g, " ") + " ";
+          function has() {
+            for (var i = 0; i < arguments.length; i++)
+              if (t.indexOf(arguments[i]) !== -1) return true;
+            return false;
+          }
+          if (has("balance", "book", "heartist")) return [
+            "BALANCE is Henry's hardback photo book — thirty dollars at godworld.org/balance.",
+            "The BALANCE card on this page takes you straight to it."
+          ];
+          if (has("triphone", "archangel", "phone", "750")) return [
+            "The Archangel 8 TriPhone is three phones that open into one tablet — a live studio where AI agents work together in real time.",
+            "It's seven hundred fifty dollars, and the Archangel 8 card on this page takes you to its site."
+          ];
+          if (has("price", "cost", "how much", "fee", "charge", "subscription", "monthly", "100")) return [
+            "Your first website is free — a static site with your business information, live on godworld.org.",
+            "Turning on the full interactive version, with an avatar like me talking to your customers, is a one-time activation of one hundred dollars. It is not a subscription — no tiers, no monthly fees.",
+            "And hosting and maintenance stay free as long as your site stays as it is."
+          ];
+          if (has("website", "build", "storefront", "business", "designs")) return [
+            "Super Intelligent Designs builds conversational avatar storefronts for small businesses. Your first website is free.",
+            "When you're ready, a one-time hundred dollar activation turns on the live interactive version — an avatar like me, talking with your customers.",
+            "Tap the S.I. Designs card on this page, or just tell me about your business and we'll start your free consultation."
+          ];
+          if (has("search", "verify", "verified", "research", "google", "claudia", "truth")) return [
+            "This is Re-Search AI. Ask me anything, and before I speak, my answer is drafted, then checked against the evidence by Claudia AI, the verification agent working in the background.",
+            "If an answer can't be verified, I say so instead of guessing. That's the Research AI Protocol — and we're not your father's Google."
+          ];
+          if (has("who are you", "your name", "who is henry", "henry", "thetruth")) return [
+            "Hi, I'm theTruth AI, the digital twin of Henry theTruth Kennemore, founder of godworld.org.",
+            "Henry built this place — I greet you, answer your questions, and point you to the right door."
+          ];
+          if (has("refund", "money back")) return [
+            "The hundred dollar pre-launch activation is fully refundable until your website is built and launched.",
+            "You are reserving your place in the pre-launch, first come, first served."
+          ];
+          if (has("when", "timeline", "launch", "january", "how long")) return [
+            "The interactive version launches publicly in January 2027, first come, first served.",
+            "Your free site can start right away with a consultation — we can begin whenever you are ready."
+          ];
+          if (has("contact", "talk to a human", "real person", "reach")) return [
+            "You're talking to the right place — everything starts right here, in this conversation.",
+            "Henry reviews every consultation personally."
+          ];
+          if (has("thank", "bye", "goodbye", "see you")) return [
+            "You're welcome. It was a pleasure talking with you.",
+            "Whenever you're ready to start your free site, just say the word."
+          ];
+          if (/^\W*(hi|hello|hey|howdy|good morning|good afternoon|good evening)\b/.test(t) || raw.length <= 3) return [
+            "Hi, I'm theTruth AI, the digital twin of Henry theTruth Kennemore, founder of godworld.org.",
+            "Ask me anything — or tap one of the prompts above and I'll walk you through it."
+          ];
+          return [
+            "I want to give you exactly the right answer on that one, so let me stick to what I know best: I build avatar storefronts for small businesses, the first site is free, and activation is a one-time hundred dollars.",
+            "You can also ask me about the BALANCE book or the Archangel 8 TriPhone — or tap a prompt above."
+          ];
+        }
+        function answerScripted(message) {
+          var lines = scriptedLines(message);
+          for (var i = 0; i < lines.length; i++) say(lines[i]);
+        }
+
+        // --- Live brain conversation --------------------------------------
+        function sendChat(message) {
+          stopSpeaking();
+          if (answerLine) answerLine.textContent = "";
+          if (scriptedMode) { answerScripted(message); return; }
+          var controller = ("AbortController" in window) ? new AbortController() : null;
+          var gotSentence = false;
+          var timer = setTimeout(function () {
+            if (!gotSentence && controller) controller.abort();
+          }, 25000);
+          var opts = {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: message, sessionId: sessionId })
+          };
+          if (controller) opts.signal = controller.signal;
+          fetch(CHAT_URL, opts).then(function (res) {
+            if (!res.ok || !res.body) throw new Error("chat " + res.status);
+            var hdr = res.headers.get("X-Session-Id");
+            if (hdr) sessionId = hdr;
+            var reader = res.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = "";
+            var first = true;
+            function pump() {
+              return reader.read().then(function (r) {
+                if (r.done) { clearTimeout(timer); return; }
+                buffer += decoder.decode(r.value, { stream: true });
+                var lines = buffer.split("\n");
+                buffer = lines.pop();
+                for (var i = 0; i < lines.length; i++) {
+                  var line = lines[i];
+                  if (!line.trim()) continue;
+                  var ev;
+                  try { ev = JSON.parse(line); } catch (e) { continue; }
+                  if (ev.type === "meta" && ev.sessionId) sessionId = ev.sessionId;
+                  if (ev.type === "sentence" && ev.text) {
+                    if (first && ev.text.indexOf("lost my train of thought") !== -1) {
+                      scriptedMode = true;
+                      clearTimeout(timer);
+                      answerScripted(message);
+                      return;
+                    }
+                    first = false;
+                    gotSentence = true;
+                    say(ev.text);
+                  }
+                }
+                return pump();
+              });
+            }
+            return pump();
+          }).catch(function () {
+            clearTimeout(timer);
+            if (!gotSentence) {
+              scriptedMode = true;
+              answerScripted(message);
+            }
+          });
+        }
+
+        // --- Interaction wiring -------------------------------------------
+        function showCard(id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          el.classList.add("shown");
+          el.removeAttribute("tabindex");
+        }
+        function interact() {
+          if (interacted) return;
+          interacted = true;
+          if (typeof window.__lobbyStopShow === "function") window.__lobbyStopShow();
+        }
+        var chips = document.querySelectorAll("#searchFront .chip");
+        for (var c = 0; c < chips.length; c++) {
+          chips[c].addEventListener("click", function () {
+            interact();
+            var pop = this.getAttribute("data-pop");
+            if (pop) showCard(pop);
+            sendChat(this.getAttribute("data-q"));
+          });
+        }
+        if (form) {
+          form.addEventListener("submit", function (e) {
+            e.preventDefault();
+            var v = (input && input.value || "").trim();
+            if (!v) return;
+            if (input) input.value = "";
+            interact();
+            sendChat(v);
+          });
+        }
+        var recog = null;
+        if (micBtn) {
+          var RC = window.SpeechRecognition || window.webkitSpeechRecognition;
+          if (!RC) {
+            micBtn.style.display = "none";
+          } else {
+            micBtn.addEventListener("click", function () {
+              interact();
+              if (recog) { try { recog.stop(); } catch (e) {} recog = null; micBtn.classList.remove("listening"); return; }
+              recog = new RC();
+              recog.continuous = false;
+              recog.interimResults = false;
+              recog.lang = "en-US";
+              recog.onresult = function (ev) {
+                var r = ev.results[ev.results.length - 1];
+                if (r && r[0] && r[0].transcript) sendChat(r[0].transcript.trim());
+              };
+              recog.onend = function () { recog = null; micBtn.classList.remove("listening"); };
+              recog.onerror = function () { recog = null; micBtn.classList.remove("listening"); };
+              micBtn.classList.add("listening");
+              try { recog.start(); } catch (e) { recog = null; micBtn.classList.remove("listening"); }
+            });
+          }
+        }
+      })();
+
     </script>
   </body>
 </html>
