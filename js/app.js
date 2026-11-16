@@ -14,9 +14,13 @@
   const stage = document.getElementById('stage');
   const cue = document.getElementById('cue');
   const status = document.getElementById('status');
-  const mouth = document.getElementById('mouth');
+  const jawImg = document.getElementById('jawImg');
   const portrait = document.getElementById('portrait');
   const frame = document.getElementById('frame');
+  // The jaw layer is a duplicate of the portrait, clipped by #jaw to the
+  // lower face only (see index.html). Feed it the same image the visitor
+  // sees — in the live single-file build that is the inlined data URI.
+  if (jawImg && portrait) jawImg.src = portrait.src;
 
   const env = {
     fetch: window.fetch.bind(window),
@@ -54,7 +58,7 @@
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.02;
       this.speaking = true;
-      // Word boundaries pulse the mouth envelope so lip movement tracks
+      // Word boundaries pulse the jaw envelope so the jaw movement tracks
       // the actual speech rhythm, not just a free-running wave.
       u.onboundary = () => {
         ttsPhase += 0.9;
@@ -222,23 +226,26 @@
     if (conn.state === 'connected') conn.end();
   });
 
-  /* ---------- mouth + presence render loop (hardening #6) ---------- */
+  /* ---------- jaw + presence render loop (hardening #6) ---------- */
   function render() {
     let level = 0;
     if (conn.transport === 'live') {
       level = conn.isSpeaking() ? conn.getPlaybackLevel() : conn.getMicLevel() * 0.6;
     } else if (tts.speaking) {
-      // speechSynthesis exposes no audio stream to analyse; the mouth is
+      // speechSynthesis exposes no audio stream to analyse; the jaw is
       // driven by a speech-envelope (paced by utterance boundary events)
       // while the claude/verified/scripted voice talks — the same
-      // level -> mouth binding the live transport feeds from its analyser.
+      // level -> jaw binding the live transport feeds from its analyser.
       ttsPhase += 0.35;
       level = 0.35 + 0.3 * Math.abs(Math.sin(ttsPhase)) * Math.random();
     }
     mouthOpen = C.mouthOpenFromLevel(level, mouthOpen);
-    const openPx = 2 + mouthOpen * 16;
-    mouth.style.height = openPx.toFixed(1) + 'px';
-    mouth.style.opacity = (0.25 + mouthOpen * 0.75).toFixed(2);
+    // mouthOpen now drives ONLY the jaw layer: the clipped portrait copy
+    // drops by up to 6px. #jaw's clip-path (top edge at 54% of the frame)
+    // makes it impossible for this transform to alter anything near the
+    // eyes (~40-42%). No dark overlay is drawn anywhere on the face.
+    const jawPx = mouthOpen * 6;
+    if (jawImg) jawImg.style.transform = `translateY(${jawPx.toFixed(1)}px)`;
     frame.style.transform = `scale(${(1 + mouthOpen * 0.006).toFixed(4)})`;
     requestAnimationFrame(render);
   }
