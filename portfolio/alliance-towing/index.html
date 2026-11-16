@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alliance Towing and Recovery</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #0c0e12; }
+  body { font-family: Georgia, "Times New Roman", serif; color: #f5f1e8; }
+  #backdrop {
+    position: fixed; inset: 0; z-index: 0;
+    background:
+      radial-gradient(ellipse 80% 55% at 50% 78%, rgba(217,119,43,.28) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 78% 18%, rgba(70,90,120,.35) 0%, transparent 65%),
+      linear-gradient(168deg, #1a2233 0%, #11151d 42%, #0c0e12 72%, #171310 100%);
+  }
+  #backdrop::after {
+    content: ""; position: absolute; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,255,255,.012) 3px, rgba(255,255,255,.012) 4px);
+  }
+  header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 2;
+    text-align: center; padding: 28px 20px 22px;
+    background: linear-gradient(180deg, rgba(5,6,9,.82) 0%, rgba(5,6,9,.45) 70%, transparent 100%);
+  }
+  header h1 { font-size: clamp(26px, 5vw, 46px); font-weight: 400; letter-spacing: .02em; line-height: 1.15; }
+  .contact { margin-top: 8px; font-size: clamp(15px, 2.4vw, 20px); letter-spacing: .08em; opacity: .92; }
+  #avatar {
+    position: fixed; left: 50%; bottom: 7vh; transform: translateX(-50%); z-index: 2;
+    width: clamp(130px, 22vw, 210px); height: clamp(130px, 22vw, 210px); border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #3d4a63 0%, #232c3f 55%, #141a28 100%);
+    border: 2px solid rgba(245,241,232,.35);
+    box-shadow: 0 18px 50px rgba(0,0,0,.55), 0 0 0 10px rgba(255,255,255,.04);
+  }
+</style>
+</head>
+<body>
+<div id="backdrop"></div>
+<header>
+  <h1>Alliance Towing and Recovery</h1>
+  <div class="contact">573-225-3619</div>
+</header>
+<div id="avatar" data-greeting="Hi, welcome to Alliance Towing and Recovery — how can we help you today?"></div>
+<script>
+  const GREETING = "Hi, welcome to Alliance Towing and Recovery — how can we help you today?";
+</script>
+</body>
+</html>

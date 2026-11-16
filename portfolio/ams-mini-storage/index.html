@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AMS Mini Storage</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #0e1214; }
+  body { font-family: Georgia, "Times New Roman", serif; color: #eef3f1; }
+  #backdrop {
+    position: fixed; inset: 0; z-index: 0;
+    background:
+      radial-gradient(ellipse at 20% 80%, rgba(110, 120, 135, 0.32), transparent 55%),
+      radial-gradient(ellipse at 85% 15%, rgba(190, 150, 90, 0.20), transparent 50%),
+      linear-gradient(160deg, #182126 0%, #11181c 45%, #0a0d0f 100%);
+  }
+  #backdrop::after {
+    content: ""; position: absolute; inset: 0;
+    background: repeating-linear-gradient(115deg, rgba(255,255,255,0.015) 0 2px, transparent 2px 14px);
+  }
+  header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 2;
+    text-align: center; padding: 28px 20px 36px;
+    background: linear-gradient(to bottom, rgba(7,10,11,0.88) 0%, rgba(7,10,11,0.55) 65%, rgba(7,10,11,0) 100%);
+  }
+  header h1 { font-size: clamp(1.7rem, 4.5vw, 3rem); font-weight: 400; letter-spacing: 0.04em; line-height: 1.15; }
+  header .contact { margin-top: 10px; font-size: clamp(1rem, 2.2vw, 1.3rem); letter-spacing: 0.12em; opacity: 0.92; }
+  #avatar {
+    position: fixed; left: 50%; bottom: 7%; transform: translateX(-50%); z-index: 1;
+    width: clamp(150px, 24vw, 240px); aspect-ratio: 3 / 4; border-radius: 120px 120px 24px 24px;
+    background: linear-gradient(180deg, rgba(210,230,228,0.20), rgba(100,145,150,0.12));
+    border: 1px solid rgba(238,243,241,0.28);
+    box-shadow: 0 24px 60px rgba(0,0,0,0.55), inset 0 0 40px rgba(255,255,255,0.05);
+  }
+</style>
+</head>
+<body>
+<div id="backdrop"></div>
+<header>
+  <h1>AMS Mini Storage</h1>
+  <div class="contact">573-803-1460</div>
+</header>
+<div id="avatar" data-avatar-name="theTruth AI" data-greeting="Hi, welcome to AMS Mini Storage — how can we help you today?"></div>
+<script>
+  const GREETING = "Hi, welcome to AMS Mini Storage — how can we help you today?";
+</script>
+</body>
+</html>
