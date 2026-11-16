@@ -6,21 +6,29 @@
  * site opens it; the agent (theTruth AI) is in it in the background; Henry
  * is not in it.
  *
- * Transports, in order (mode 'live-first', Henry's dictated setup):
- *   1. live     — Gemini Live API over WebSocket, authorized by a
- *                 short-lived ephemeral token minted by OUR backend
- *                 (backend/live-token.js). Mic audio streams up as PCM
- *                 chunks; model audio streams down into a jitter-buffered
- *                 playback queue; an AnalyserNode on that queue drives
- *                 the avatar's mouth from real audio levels.
- *   2. verified — the ARCHITECTURE.md pipeline: page -> Worker /api/chat
- *                 (NDJSON sentence stream) -> BrainHub -> brain node
- *                 (reservoir -> draft -> Claudia verify -> speak, with
- *                 the scripted floor inside the pipeline). Replies are
- *                 spoken by the page via speechSynthesis.
+ * Transports, in order (DEFAULT mode 'claude-first' — Henry's correction
+ * 2026-11-16 ~14:10 CST: the connection he ordered is to his CLAUDE agent,
+ * theTruth AI brain — NOT a Gemini link):
+ *   1. claude   — the Muse agent powering the avatar. The visitor's
+ *                 words (browser speech recognition, or typed input when
+ *                 recognition is unavailable) go to the EXISTING verified
+ *                 brain pipeline: page -> Worker /api/chat (NDJSON
+ *                 sentence stream) -> BrainHub -> brain node (reservoir
+ *                 -> draft -> Claudia verification gate -> speak, with
+ *                 the scripted floor inside the pipeline). The pipeline's
+ *                 answers are what the avatar voices, via the page's
+ *                 speech synthesis; playback drives the mouth. This is
+ *                 turn-based voice (speak -> answer -> speak), not
+ *                 full-duplex streaming.
+ *   2. verified — the same /api/chat pipe, used as the text-pipeline
+ *                 fallback if the claude transport's connect fails.
  *   3. scripted — a small local floor of grounded answers, spoken via
  *                 speechSynthesis, when both network paths are down.
  *                 The avatar never goes silent.
+ *   legacy: live — Gemini Live API over WebSocket (ephemeral token).
+ *                 Retained in the tree ONLY as an explicitly-configured
+ *                 legacy mode ('live-first'). It is never the default
+ *                 and is never the avatar's described power source.
  *
  * The module is environment-injectable (WebSocket, fetch, AudioContext,
  * getUserMedia are passed in) so the exact shipping code is testable
@@ -161,7 +169,10 @@ class PlaybackQueue {
   }
 }
 
-/* ---------------- Live transport (Gemini Live via ephemeral token) ---------------- */
+/* ---------------- Live transport (LEGACY — Gemini Live via ephemeral token) ----------------
+ * Retained for the explicit 'live-first' legacy mode only. Per Henry's
+ * 2026-11-16 correction this is NOT the connection he ordered and must
+ * never be the default or be described as the agent powering the site. */
 
 class LiveTransport {
   constructor(env, callbacks) {
@@ -441,6 +452,45 @@ class VerifiedTransport {
   }
 }
 
+/* ---------------- Claude connection (the agent powering the avatar) ----------------
+ *
+ * Henry's ordered connection: touching the site opens a connection to his
+ * Muse agent (theTruth AI brain); the agent takes it in the background
+ * and talks through the avatar; Henry is not in it. The agent's voice on
+ * the site IS the verified brain pipeline — the same pipe the verified
+ * transport uses — so this class rides VerifiedTransport's /api/chat
+ * stream and adds the connection semantics on top:
+ *   - connect() proves the agent's pipeline is reachable before the page
+ *     claims a connection.
+ *   - Every answer sentence the avatar speaks is a pipeline sentence,
+ *     verbatim — the avatar never voices anything the pipeline did not
+ *     return (so the Claudia gate and the scripted floor inside the
+ *     pipeline are inherited, not bypassed).
+ *   - Escalation honesty: when the pipeline returns its "get Henry"
+ *     class of answer, that sentence is spoken as-is and the turn is
+ *     noted as an escalation in the session record.
+ */
+const ESCALATION_PATTERN = /rather connect you with Henry|get Henry|connect you with Henry/i;
+
+class ClaudeTransport extends VerifiedTransport {
+  constructor(env, opts) {
+    super(env, opts);
+    this.onEscalation = opts.onEscalation;
+    const pipelineOnSentence = this.onSentence;
+    this.onSentence = (text) => {
+      if (ESCALATION_PATTERN.test(text)) this.onEscalation && this.onEscalation(text);
+      pipelineOnSentence && pipelineOnSentence(text);
+    };
+  }
+
+  /** Reachability probe: the agent's pipeline must answer before we connect. */
+  async connect() {
+    const res = await this.env.fetch(`${this.workerUrl}/api/health`, { method: 'GET' });
+    if (!res.ok) throw new Error(`worker health HTTP ${res.status}`);
+    return { transport: 'claude' };
+  }
+}
+
 /* ---------------- Scripted floor (local, grounded) ---------------- */
 
 const FLOOR_ANSWERS = [
@@ -483,16 +533,19 @@ class AvatarConnection {
     this.env = env;
     this.tokenEndpoint = options.tokenEndpoint || '/api/live-token';
     this.workerUrl = options.workerUrl || DEFAULT_WORKER_URL;
-    this.mode = options.mode || 'live-first';
+    // Default is the connection Henry ordered: the Muse agent powers
+    // the avatar. 'live-first' survives only as an explicit legacy mode.
+    this.mode = options.mode || 'claude-first';
     this.cb = options.callbacks || {};
     this.state = 'idle'; // idle | connecting | connected | dropped | blocked
-    this.transport = null; // live | verified | scripted
+    this.transport = null; // claude | verified | scripted | live (legacy)
     this.sessionId =
       options.sessionId ||
       'gw-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     this.record = [];
     this.live = null;
     this.verified = null;
+    this.claude = null;
     this._liveDroppedOnce = false;
     this._note('created', { mode: this.mode });
   }
@@ -522,14 +575,22 @@ class AvatarConnection {
       this.live = null;
     }
     this._setState('connecting');
-    const order =
-      this.mode === 'verified-first' || this._liveDroppedOnce ? ['verified', 'live'] : ['live', 'verified'];
+    // Transport order by mode. The default ('claude-first') never routes
+    // the avatar's power through Gemini Live; 'live' appears only in the
+    // explicit legacy 'live-first' mode, and after a live drop the
+    // reconnect sticks to the Muse connection.
+    let order;
+    if (this._liveDroppedOnce) order = ['claude', 'verified'];
+    else if (this.mode === 'live-first') order = ['live', 'claude', 'verified'];
+    else if (this.mode === 'verified-first') order = ['verified', 'claude'];
+    else order = ['claude', 'verified']; // claude-first (default)
     for (const which of order) {
       try {
         if (which === 'live') {
           const outcome = await this._connectLive();
           if (outcome === 'blocked') return; // mic blocked: status text guides the fix; a re-tap retries
-        } else await this._connectVerified();
+        } else if (which === 'claude') await this._connectClaude();
+        else await this._connectVerified();
         this._note('connected', { transport: this.transport });
         return;
       } catch (e) {
@@ -567,6 +628,21 @@ class AvatarConnection {
     return 'connected';
   }
 
+  async _connectClaude() {
+    this.claude = new ClaudeTransport(this.env, {
+      workerUrl: this.workerUrl,
+      sessionId: this.sessionId,
+      onSentence: (text) => this.cb.onSpeakText && this.cb.onSpeakText(text),
+      onDone: () => this.cb.onTurnComplete && this.cb.onTurnComplete(),
+      onError: (e) => this._note('claude-error', { error: String((e && e.message) || e) }),
+      onEscalation: () => this._note('escalation', { transport: 'claude' }),
+    });
+    await this.claude.connect();
+    this._setState('connected', 'claude');
+    this.cb.onSpeakText && this.cb.onSpeakText(INTRO_LINE);
+    // The agent takes the visitor's turns via hear().
+  }
+
   async _connectVerified() {
     this.verified = new VerifiedTransport(this.env, {
       workerUrl: this.workerUrl,
@@ -587,9 +663,13 @@ class AvatarConnection {
     this._note('visitor-turn', { chars: text.length });
     if (this.transport === 'live' && this.live) {
       this.live.sendText(text);
-    } else if (this.transport === 'verified' && this.verified) {
+    } else if (
+      (this.transport === 'claude' && this.claude) ||
+      (this.transport === 'verified' && this.verified)
+    ) {
+      const pipe = this.transport === 'claude' ? this.claude : this.verified;
       try {
-        await this.verified.send(text);
+        await pipe.send(text);
       } catch {
         // Pipeline dropped mid-conversation: fall to the scripted floor.
         this._setState('connected', 'scripted');
@@ -638,6 +718,7 @@ const api = {
   PlaybackQueue,
   LiveTransport,
   VerifiedTransport,
+  ClaudeTransport,
   AvatarConnection,
   scriptedAnswer,
   floatToPcm16Base64,

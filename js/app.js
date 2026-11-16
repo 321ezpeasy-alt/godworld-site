@@ -34,7 +34,12 @@
       }),
   };
 
-  /* ---------- speech output for the verified + scripted transports ---------- */
+  /* ---------- speech output for the claude / verified / scripted transports ----------
+   * The project's existing speech route: the prior builds speak pipeline
+   * replies with the browser's speechSynthesis (there is no project TTS
+   * endpoint), so the Muse connection uses it too. */
+  const typedForm = document.getElementById('typedForm');
+  const typedInput = document.getElementById('typedInput');
   const tts = {
     queue: [],
     speaking: false,
@@ -49,6 +54,11 @@
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.02;
       this.speaking = true;
+      // Word boundaries pulse the mouth envelope so lip movement tracks
+      // the actual speech rhythm, not just a free-running wave.
+      u.onboundary = () => {
+        ttsPhase += 0.9;
+      };
       u.onend = u.onerror = () => {
         this.speaking = false;
         recognition.arm();
@@ -64,7 +74,10 @@
     },
   };
 
-  /* ---------- speech input for the verified + scripted transports ---------- */
+  /* ---------- speech input for the claude / verified / scripted transports ----------
+   * Browser speech recognition where available (no cost, no key). Where
+   * it is unavailable, start() returns false and the page degrades to
+   * typed input through the exact same hear() path. */
   const recognition = {
     rec: null,
     wanted: false,
@@ -83,7 +96,7 @@
     },
     start(conn) {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) return;
+      if (!SR) return false;
       this.wanted = true;
       const rec = new SR();
       rec.continuous = true;
@@ -97,6 +110,7 @@
       rec.onend = () => this.arm();
       this.rec = rec;
       this.arm();
+      return true;
     },
     stop() {
       this.wanted = false;
@@ -112,7 +126,10 @@
   const conn = new C.AvatarConnection(env, {
     tokenEndpoint: C.DEFAULT_WORKER_URL + '/api/live-token',
     workerUrl: C.DEFAULT_WORKER_URL,
-    mode: 'live-first',
+    // Henry's ordered connection is the DEFAULT voice path: the Muse
+    // agent (verified brain pipeline) powers the avatar. Gemini Live is
+    // legacy-only and is not selected here.
+    mode: 'claude-first',
     callbacks: {
       onState(state, transport) {
         document.body.dataset.state = state;
@@ -121,17 +138,17 @@
         if (state === 'connected') {
           cue.classList.add('hidden');
           setStatus(
-            transport === 'live'
-              ? 'Connected — speak any time'
-              : transport === 'verified'
-                ? 'Connected — speak any time'
-                : 'Connected — basic mode'
+            transport === 'scripted' ? 'Connected — basic mode' : 'Connected — speak any time'
           );
-          if (transport !== 'live') recognition.start(conn);
+          if (transport !== 'live') {
+            const heard = recognition.start(conn);
+            if (!heard) showTypedInput();
+          }
         }
         if (state === 'dropped') {
           recognition.stop();
           tts.cancel();
+          if (typedForm) typedForm.classList.add('hidden');
           cue.classList.remove('hidden');
           setStatus('Connection dropped — tap to reconnect');
         }
@@ -150,6 +167,28 @@
 
   function setStatus(text) {
     status.textContent = text;
+  }
+
+  /* ---------- typed input: the degrade path when speech recognition
+   * is unavailable. Same hear() path as speech — the words reach the
+   * Muse agent's pipeline identically, and answers are spoken back. */
+  function showTypedInput() {
+    if (!typedForm || !typedInput) return;
+    typedForm.classList.remove('hidden');
+    setStatus('Voice input is not available in this browser — type to talk');
+    typedInput.focus();
+  }
+  if (typedForm) {
+    typedForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const text = typedInput.value.trim();
+      if (!text) return;
+      typedInput.value = '';
+      conn.hear(text);
+    });
+    // Taps inside the form must not retrigger the screen-tap connect.
+    typedForm.addEventListener('click', (e) => e.stopPropagation());
   }
 
   /* ---------- the tap: the screen is the trigger ---------- */
@@ -190,7 +229,9 @@
       level = conn.isSpeaking() ? conn.getPlaybackLevel() : conn.getMicLevel() * 0.6;
     } else if (tts.speaking) {
       // speechSynthesis exposes no audio stream to analyse; the mouth is
-      // driven by a speech-envelope while the verified/scripted voice talks.
+      // driven by a speech-envelope (paced by utterance boundary events)
+      // while the claude/verified/scripted voice talks — the same
+      // level -> mouth binding the live transport feeds from its analyser.
       ttsPhase += 0.35;
       level = 0.35 + 0.3 * Math.abs(Math.sin(ttsPhase)) * Math.random();
     }
