@@ -287,6 +287,78 @@ const SPIEL = [
   "Tell me about your business — what you do, and the name exactly as you'd like it to appear — and I'll get your consultation started. Henry reviews every consultation personally."
 ];
 
+// --- Buyer's / seller code issuance (in-conversation only) -----------------
+// The original Archangel 8 seller-code generator, recovered verbatim from the
+// old TriPhone page (triphone.html; verified against the live page 2026-10-08):
+// the code is minted client-side from the visitor's PayPal-linked email —
+// deterministic, so the same email always makes the same code. No server
+// call, no new wiring; everything happens inside the conversation below.
+const CODE_GLYPHS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function sellerCode(email) {
+  const clean = String(email).trim().toLowerCase();
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode('archangel8:' + clean)).then((buf) => {
+    const bytes = new Uint8Array(buf);
+    let out = '', acc = 0, bits = 0, i = 0;
+    while (out.length < 6) {
+      acc = (acc << 8) | bytes[i++ % bytes.length]; bits += 8;
+      while (bits >= 5 && out.length < 6) { bits -= 5; out += CODE_GLYPHS[(acc >> bits) & 31]; }
+    }
+    return 'A8-' + out;
+  });
+}
+
+let codeEmailPending = false;
+const EMAIL_IN_TEXT = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+
+function issueCode(rawEmail) {
+  const email = String(rawEmail).trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    codeEmailPending = true;
+    queueSpeech("That doesn't look like a complete email address — what's the email linked to your PayPal?", true);
+    return;
+  }
+  sellerCode(email).then((code) => {
+    queueSpeech('Your code is ' + code + ' — keep it somewhere safe.', true);
+    queueSpeech("Here's how it works: give that code when you make your purchase, and once the purchase verifies, $100 comes back to the PayPal on " + email + ". You can get your code before or after you buy — and yes, your own code works on your own first purchase too.", true);
+  }).catch(() => {
+    queueSpeech("I couldn't make your code just this second — ask me again in a moment and I'll generate it right away.", true);
+  });
+}
+
+// Returns true when the message was handled by the code flow, so it does not
+// go to the brain. Adds no visible page text — replies land in the chat log.
+function handleCodeFlow(text) {
+  const lower = ' ' + text.toLowerCase() + ' ';
+  const emailMatch = text.match(EMAIL_IN_TEXT);
+  if (codeEmailPending) {
+    addMsg(text, 'visitor');
+    if (emailMatch) { codeEmailPending = false; issueCode(emailMatch[0]); return true; }
+    if (lower.includes('never mind') || lower.includes('cancel') || lower.includes('forget it')) {
+      codeEmailPending = false;
+      queueSpeech("No problem — just ask me whenever you'd like your code.", true);
+      return true;
+    }
+    queueSpeech("I just need the email linked to your PayPal — your code is made from it, and that PayPal is where the $100 goes.", true);
+    return true;
+  }
+  if (/\b(how|explain|what happens)\b/.test(lower)) return false; // a question about codes — the brain answers it
+  const wantsCode = lower.includes('discount') || lower.includes('rebate') || lower.includes('referral') ||
+    (lower.includes('code') &&
+     (lower.includes('buyer') || lower.includes('seller') ||
+      lower.includes('get') || lower.includes('want') || lower.includes('give me') || lower.includes('my code') || lower.includes('a code')));
+  if (!wantsCode) return false;
+  addMsg(text, 'visitor');
+  if (emailMatch) { issueCode(emailMatch[0]); return true; }
+  codeEmailPending = true;
+  queueSpeech("Happy to — your $100 buyer's code is made from the email linked to your PayPal, and the same email always makes the same code. What's that email?", true);
+  return true;
+}
+
+function routeMessage(text, fromVoice) {
+  if (handleCodeFlow(text)) return;
+  sendChat(text, fromVoice);
+}
+
 const avatarEl = document.getElementById('avatar');
 const statusEl = document.getElementById('statusLine');
 const chatLog = document.getElementById('chatLog');
@@ -428,7 +500,7 @@ function startListening() {
       if (streamController) streamController.abort();
       stopSpeaking();
     }
-    sendChat(transcript, true);
+    routeMessage(transcript, true);
   };
   recognition.onend = () => {
     if (entered) { try { recognition.start(); } catch { /* already running */ } }
@@ -463,7 +535,7 @@ function sendTyped() {
     if (streamController) streamController.abort();
     stopSpeaking();
   }
-  sendChat(text, false);
+  routeMessage(text, false);
 }
 sendBtn.addEventListener('click', sendTyped);
 typeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTyped(); });
