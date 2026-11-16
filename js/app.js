@@ -26,7 +26,7 @@
       ? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
       : null,
     postSessionRecord: (record) =>
-      fetch('/api/session-record', {
+      fetch(C.DEFAULT_WORKER_URL + '/api/session-record', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(record),
@@ -110,7 +110,7 @@
   let ttsPhase = 0;
 
   const conn = new C.AvatarConnection(env, {
-    tokenEndpoint: '/api/live-token',
+    tokenEndpoint: C.DEFAULT_WORKER_URL + '/api/live-token',
     workerUrl: C.DEFAULT_WORKER_URL,
     mode: 'live-first',
     callbacks: {
