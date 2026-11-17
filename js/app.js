@@ -17,6 +17,9 @@
   const jawImg = document.getElementById('jawImg');
   const portrait = document.getElementById('portrait');
   const frame = document.getElementById('frame');
+  const doorCard = document.getElementById('doorCard');
+  let activeDoorUrl = null;
+
   // The jaw layer is a duplicate of the portrait, clipped by #jaw to the
   // lower face only (see index.html). Feed it the same image the visitor
   // sees — in the live single-file build that is the inlined data URI.
@@ -118,6 +121,30 @@
     },
   };
 
+  /* ---------- door card helpers ---------- */
+  function hideDoorCard() {
+    if (!doorCard) return;
+    doorCard.classList.add('hidden');
+    doorCard.textContent = '';
+    activeDoorUrl = null;
+  }
+
+  function showDoorCard(name, url) {
+    if (!doorCard || !name || !url) return;
+    activeDoorUrl = url;
+    doorCard.textContent = name;
+    doorCard.classList.remove('hidden');
+  }
+
+  if (doorCard) {
+    doorCard.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (activeDoorUrl) {
+        window.open(activeDoorUrl, '_blank', 'noopener,noreferrer');
+      }
+    });
+  }
+
   /* ---------- the connection ---------- */
   let mouthOpen = 0;
   // Syllable-rate mouth driver for the TTS transports (see connection.js):
@@ -133,6 +160,13 @@
     // agent (verified brain pipeline) powers the avatar. Gemini Live is
     // legacy-only and is not selected here.
     mode: 'claude-first',
+    // Session gateway (Henry's locked flow, 2026-11-16): nonce ->
+    // short-lived session token before the pipeline connects. This is
+    // Henry's OWN front door, so the session mode is 'audible'
+    // (owner-join: the audio leg can terminate at Henry's phone);
+    // client storefronts default to 'background' (sub-agent session).
+    sessionGateway: true,
+    sessionMode: 'audible',
     callbacks: {
       onState(state, transport) {
         document.body.dataset.state = state;
@@ -151,6 +185,7 @@
         if (state === 'dropped') {
           recognition.stop();
           tts.cancel();
+          hideDoorCard();
           if (typedForm) typedForm.classList.add('hidden');
           cue.classList.remove('hidden');
           setStatus('Connection dropped — tap to reconnect');
@@ -162,6 +197,11 @@
       },
       onSpeakText(text) {
         tts.speak(text);
+      },
+      onLink(linkObj) {
+        if (linkObj && linkObj.name && linkObj.url) {
+          showDoorCard(linkObj.name, linkObj.url);
+        }
       },
       onDropped() {},
       onRecord() {},
@@ -213,6 +253,7 @@
 
   stage.addEventListener('click', () => {
     unlockAudio();
+    hideDoorCard();
     if (conn.state === 'idle' || conn.state === 'dropped' || conn.state === 'blocked') {
       conn.connect();
     }

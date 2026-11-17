@@ -34,6 +34,20 @@
  * getUserMedia are passed in) so the exact shipping code is testable
  * outside a browser. No keys appear here — the page only ever holds a
  * single-use ephemeral token, fetched at connect time.
+ *
+ * SESSION GATEWAY (Henry's locked flow, 2026-11-16 ~20:40 CST): before
+ * the claude/verified transports connect, the client runs the gateway
+ * handshake against the Worker — POST /api/session-nonce, then POST
+ * /api/session-exchange — exchanging a one-time nonce for a
+ * short-lived session token bound to a server-minted sessionId and a
+ * session MODE ('background' default; 'audible' = owner-join, chosen
+ * by Henry's own front door in app.js). The token rides every
+ * /api/chat turn (Authorization header + body field) and the brain
+ * node validates it; a 401 mid-conversation triggers ONE silent
+ * re-handshake and retry before the scripted floor. The gateway
+ * authenticates the session only — the answers still come solely from
+ * the verified pipeline. The legacy live transport does not use the
+ * gateway (its own ephemeral-token path, above).
  */
 
 const LIVE_MODEL = 'models/gemini-2.5-flash-native-audio-latest';
@@ -428,14 +442,43 @@ class LiveTransport {
   }
 }
 
+/* ---------------- Session gateway handshake ----------------
+ * POST /api/session-nonce -> { nonce, expiresAt }
+ * POST /api/session-exchange { nonce, mode } ->
+ *   { sessionToken, sessionId, mode, expiresAt, expiresIn }
+ * The nonce is single-use and lives ~2 minutes; the session token is
+ * short-lived (~30 min) and bound to the returned sessionId + mode.
+ * Throws on any failure — the caller decides the fallback. */
+async function startGatewaySession(fetchFn, workerUrl, mode) {
+  const nonceRes = await fetchFn(`${workerUrl}/api/session-nonce`, { method: 'POST' });
+  if (!nonceRes.ok) throw new Error(`session-nonce HTTP ${nonceRes.status}`);
+  const noncePayload = await nonceRes.json();
+  if (!noncePayload || typeof noncePayload.nonce !== 'string') {
+    throw new Error('session-nonce returned no nonce');
+  }
+  const exRes = await fetchFn(`${workerUrl}/api/session-exchange`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nonce: noncePayload.nonce, mode: mode || 'background' }),
+  });
+  if (!exRes.ok) throw new Error(`session-exchange HTTP ${exRes.status}`);
+  const payload = await exRes.json();
+  if (!payload || typeof payload.sessionToken !== 'string' || typeof payload.sessionId !== 'string') {
+    throw new Error('session-exchange returned no session token');
+  }
+  return payload;
+}
+
 /* ---------------- Verified transport (ARCHITECTURE.md pipeline) ---------------- */
 
 class VerifiedTransport {
-  constructor(env, { workerUrl, sessionId, onSentence, onDone, onError }) {
+  constructor(env, { workerUrl, sessionId, getSessionToken, onSentence, onLink, onDone, onError }) {
     this.env = env;
     this.workerUrl = workerUrl;
     this.sessionId = sessionId;
+    this.getSessionToken = typeof getSessionToken === 'function' ? getSessionToken : null;
     this.onSentence = onSentence;
+    this.onLink = onLink;
     this.onDone = onDone;
     this.onError = onError;
   }
@@ -449,11 +492,15 @@ class VerifiedTransport {
 
   async send(message) {
     let res;
+    const sessionToken = this.getSessionToken ? this.getSessionToken() : null;
     try {
       res = await this.env.fetch(`${this.workerUrl}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, sessionId: this.sessionId }),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+        },
+        body: JSON.stringify({ message, sessionId: this.sessionId, sessionToken }),
       });
     } catch (e) {
       this.onError && this.onError(e);
@@ -461,6 +508,7 @@ class VerifiedTransport {
     }
     if (!res.ok || !res.body) {
       const err = new Error(`chat HTTP ${res.status}`);
+      err.status = res.status; // the orchestrator re-handshakes once on 401
       this.onError && this.onError(err);
       throw err;
     }
@@ -483,6 +531,7 @@ class VerifiedTransport {
           continue;
         }
         if (obj.type === 'sentence' && obj.text) this.onSentence && this.onSentence(obj.text);
+        if (obj.type === 'link' && obj.url) this.onLink && this.onLink(obj);
         if (obj.type === 'done') this.onDone && this.onDone();
       }
     }
@@ -492,6 +541,7 @@ class VerifiedTransport {
       try {
         const obj = JSON.parse(tail);
         if (obj.type === 'sentence' && obj.text) this.onSentence && this.onSentence(obj.text);
+        if (obj.type === 'link' && obj.url) this.onLink && this.onLink(obj);
         if (obj.type === 'done') this.onDone && this.onDone();
       } catch {}
     }
@@ -582,6 +632,11 @@ class AvatarConnection {
     // Default is the connection Henry ordered: the Muse agent powers
     // the avatar. 'live-first' survives only as an explicit legacy mode.
     this.mode = options.mode || 'claude-first';
+    // Session gateway (see header): on by default for the pipeline
+    // transports; the legacy live-first mode keeps its own token path.
+    this.sessionGateway = options.sessionGateway !== false;
+    this.sessionMode = options.sessionMode || 'background';
+    this.sessionToken = null;
     this.cb = options.callbacks || {};
     this.state = 'idle'; // idle | connecting | connected | dropped | blocked
     this.transport = null; // claude | verified | scripted | live (legacy)
@@ -621,6 +676,14 @@ class AvatarConnection {
       this.live = null;
     }
     this._setState('connecting');
+    // Session gateway handshake first (pipeline modes only): nonce ->
+    // signed exchange -> short-lived session token bound to a
+    // server-minted sessionId + this connection's mode. On failure the
+    // connection continues tokenless (the pre-gateway anonymous path)
+    // and the failure is on the session record — never hidden.
+    if (this.sessionGateway && this.mode !== 'live-first' && !this.sessionToken) {
+      await this._startGatewaySession();
+    }
     // Transport order by mode. The default ('claude-first') never routes
     // the avatar's power through Gemini Live; 'live' appears only in the
     // explicit legacy 'live-first' mode, and after a live drop the
@@ -647,6 +710,22 @@ class AvatarConnection {
     this._setState('connected', 'scripted');
     this._note('connected', { transport: 'scripted' });
     this.cb.onSpeakText && this.cb.onSpeakText(INTRO_LINE);
+  }
+
+  /** Run the gateway handshake; adopt the server-minted session. */
+  async _startGatewaySession() {
+    try {
+      const session = await startGatewaySession(this.env.fetch, this.workerUrl, this.sessionMode);
+      this.sessionToken = session.sessionToken;
+      this.sessionId = session.sessionId;
+      this.sessionMode = session.mode || this.sessionMode;
+      this._note('gateway-session', { mode: this.sessionMode, expiresAt: session.expiresAt || null });
+      return true;
+    } catch (e) {
+      this.sessionToken = null;
+      this._note('gateway-failed', { error: String((e && e.message) || e) });
+      return false;
+    }
   }
 
   async _connectLive() {
@@ -678,7 +757,9 @@ class AvatarConnection {
     this.claude = new ClaudeTransport(this.env, {
       workerUrl: this.workerUrl,
       sessionId: this.sessionId,
+      getSessionToken: () => this.sessionToken,
       onSentence: (text) => this.cb.onSpeakText && this.cb.onSpeakText(text),
+      onLink: (linkObj) => this.cb.onLink && this.cb.onLink(linkObj),
       onDone: () => this.cb.onTurnComplete && this.cb.onTurnComplete(),
       onError: (e) => this._note('claude-error', { error: String((e && e.message) || e) }),
       onEscalation: () => this._note('escalation', { transport: 'claude' }),
@@ -693,7 +774,9 @@ class AvatarConnection {
     this.verified = new VerifiedTransport(this.env, {
       workerUrl: this.workerUrl,
       sessionId: this.sessionId,
+      getSessionToken: () => this.sessionToken,
       onSentence: (text) => this.cb.onSpeakText && this.cb.onSpeakText(text),
+      onLink: (linkObj) => this.cb.onLink && this.cb.onLink(linkObj),
       onDone: () => this.cb.onTurnComplete && this.cb.onTurnComplete(),
       onError: (e) => this._note('verified-error', { error: String((e && e.message) || e) }),
     });
@@ -716,11 +799,27 @@ class AvatarConnection {
       const pipe = this.transport === 'claude' ? this.claude : this.verified;
       try {
         await pipe.send(text);
-      } catch {
-        // Pipeline dropped mid-conversation: fall to the scripted floor.
-        this._setState('connected', 'scripted');
-        this._note('fell-to-scripted');
-        this.cb.onSpeakText && this.cb.onSpeakText(scriptedAnswer(text));
+      } catch (e) {
+        // A 401 means the gateway session token expired or was
+        // rejected: re-handshake ONCE and retry the turn on the fresh
+        // session before giving up on the pipeline.
+        let recovered = false;
+        if (e && e.status === 401 && this.sessionGateway) {
+          this.sessionToken = null;
+          if (await this._startGatewaySession()) {
+            pipe.sessionId = this.sessionId;
+            try {
+              await pipe.send(text);
+              recovered = true;
+            } catch {}
+          }
+        }
+        if (!recovered) {
+          // Pipeline dropped mid-conversation: fall to the scripted floor.
+          this._setState('connected', 'scripted');
+          this._note('fell-to-scripted');
+          this.cb.onSpeakText && this.cb.onSpeakText(scriptedAnswer(text));
+        }
       }
     } else {
       this.cb.onSpeakText && this.cb.onSpeakText(scriptedAnswer(text));
@@ -751,6 +850,7 @@ class AvatarConnection {
   end() {
     this._note('ended', { transport: this.transport });
     if (this.live) this.live.close();
+    this.sessionToken = null; // a fresh tap runs a fresh gateway handshake
     this._setState('idle', null);
   }
 }
@@ -766,6 +866,7 @@ const api = {
   VerifiedTransport,
   ClaudeTransport,
   AvatarConnection,
+  startGatewaySession,
   scriptedAnswer,
   floatToPcm16Base64,
   pcm16Base64ToFloat32,
