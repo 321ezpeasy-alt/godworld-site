@@ -48,6 +48,18 @@
  * authenticates the session only — the answers still come solely from
  * the verified pipeline. The legacy live transport does not use the
  * gateway (its own ephemeral-token path, above).
+ *
+ * LIVENESS (go-live 2026-11-17, Henry's word): when the page wires a
+ * liveness client (js/liveness-client.js + the device adapters in
+ * app.js), the handshake runs the EZ Peasy liveness-at-touch check
+ * on the visitor's device BETWEEN the nonce and the exchange —
+ * camera flash challenge + a cognitive prompt generated fresh per
+ * check — and the exchange carries the resulting CAT; the session
+ * token comes back with the liveness claim. A flow rider then
+ * renews the attestation through the conversation itself (a quiet
+ * flash CAT rides a turn when the claim nears stale; a turn the
+ * node flags recheckRequired triggers a full re-check). Any failure
+ * leaves the page on the tokenless graceful fallback — no freeze.
  */
 
 const LIVE_MODEL = 'models/gemini-2.5-flash-native-audio-latest';
@@ -449,7 +461,24 @@ class LiveTransport {
  * The nonce is single-use and lives ~2 minutes; the session token is
  * short-lived (~30 min) and bound to the returned sessionId + mode.
  * Throws on any failure — the caller decides the fallback. */
-async function startGatewaySession(fetchFn, workerUrl, mode) {
+async function startGatewaySession(fetchFn, workerUrl, mode, livenessClient) {
+  // LIVENESS (go-live 2026-11-17, Henry's word): when a liveness
+  // client is wired (the front door wires one — see app.js), the
+  // handshake IS the EZ Peasy liveness-at-touch flow: nonce ->
+  // on-device check (flash + generated cognitive) -> CAT -> exchange
+  // with the CAT. The session token comes back carrying the liveness
+  // claim. Any failure throws — the caller falls back to the
+  // tokenless path exactly as a gateway failure does today.
+  if (livenessClient) {
+    const hs = await livenessClient.livenessHandshake({ mode: mode || 'background' });
+    if (!hs.ok || !hs.session) {
+      throw new Error(`liveness handshake failed: ${hs.reason || 'unknown'}`);
+    }
+    if (typeof hs.session.sessionToken !== 'string' || typeof hs.session.sessionId !== 'string') {
+      throw new Error('session-exchange returned no session token');
+    }
+    return hs.session;
+  }
   const nonceRes = await fetchFn(`${workerUrl}/api/session-nonce`, { method: 'POST' });
   if (!nonceRes.ok) throw new Error(`session-nonce HTTP ${nonceRes.status}`);
   const noncePayload = await nonceRes.json();
@@ -472,7 +501,7 @@ async function startGatewaySession(fetchFn, workerUrl, mode) {
 /* ---------------- Verified transport (ARCHITECTURE.md pipeline) ---------------- */
 
 class VerifiedTransport {
-  constructor(env, { workerUrl, sessionId, getSessionToken, onSentence, onLink, onDone, onError }) {
+  constructor(env, { workerUrl, sessionId, getSessionToken, onSentence, onLink, onDone, onError, onLivenessRecheck }) {
     this.env = env;
     this.workerUrl = workerUrl;
     this.sessionId = sessionId;
@@ -481,6 +510,7 @@ class VerifiedTransport {
     this.onLink = onLink;
     this.onDone = onDone;
     this.onError = onError;
+    this.onLivenessRecheck = onLivenessRecheck;
   }
 
   /** Reachability probe so a dead pipeline fails at connect, not mid-chat. */
@@ -490,7 +520,7 @@ class VerifiedTransport {
     return { transport: 'verified' };
   }
 
-  async send(message) {
+  async send(message, livenessCat) {
     let res;
     const sessionToken = this.getSessionToken ? this.getSessionToken() : null;
     try {
@@ -500,7 +530,9 @@ class VerifiedTransport {
           'Content-Type': 'application/json',
           ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
         },
-        body: JSON.stringify({ message, sessionId: this.sessionId, sessionToken }),
+        // LIVENESS: a renewal CAT prepared by the flow rider rides
+        // the turn body; the node's chat gate consumes it.
+        body: JSON.stringify({ message, sessionId: this.sessionId, sessionToken, ...(livenessCat ? { livenessCat } : {}) }),
       });
     } catch (e) {
       this.onError && this.onError(e);
@@ -532,6 +564,7 @@ class VerifiedTransport {
         }
         if (obj.type === 'sentence' && obj.text) this.onSentence && this.onSentence(obj.text);
         if (obj.type === 'link' && obj.url) this.onLink && this.onLink(obj);
+        if (obj.type === 'liveness' && obj.recheckRequired) this.onLivenessRecheck && this.onLivenessRecheck(obj);
         if (obj.type === 'done') this.onDone && this.onDone();
       }
     }
@@ -542,6 +575,7 @@ class VerifiedTransport {
         const obj = JSON.parse(tail);
         if (obj.type === 'sentence' && obj.text) this.onSentence && this.onSentence(obj.text);
         if (obj.type === 'link' && obj.url) this.onLink && this.onLink(obj);
+        if (obj.type === 'liveness' && obj.recheckRequired) this.onLivenessRecheck && this.onLivenessRecheck(obj);
         if (obj.type === 'done') this.onDone && this.onDone();
       } catch {}
     }
@@ -636,6 +670,13 @@ class AvatarConnection {
     // transports; the legacy live-first mode keeps its own token path.
     this.sessionGateway = options.sessionGateway !== false;
     this.sessionMode = options.sessionMode || 'background';
+    // LIVENESS (go-live 2026-11-17): the EZ Peasy liveness client
+    // (js/liveness-client.js, adapters wired by the page). When
+    // present, the gateway handshake runs the liveness-at-touch
+    // check and a flow rider renews the attestation through the
+    // conversation. Absent = the pre-liveness handshake, unchanged.
+    this.livenessClient = options.livenessClient || null;
+    this.flowRider = null;
     this.sessionToken = null;
     this.cb = options.callbacks || {};
     this.state = 'idle'; // idle | connecting | connected | dropped | blocked
@@ -715,16 +756,46 @@ class AvatarConnection {
   /** Run the gateway handshake; adopt the server-minted session. */
   async _startGatewaySession() {
     try {
-      const session = await startGatewaySession(this.env.fetch, this.workerUrl, this.sessionMode);
+      const session = await startGatewaySession(this.env.fetch, this.workerUrl, this.sessionMode, this.livenessClient);
       this.sessionToken = session.sessionToken;
       this.sessionId = session.sessionId;
       this.sessionMode = session.mode || this.sessionMode;
       this._note('gateway-session', { mode: this.sessionMode, expiresAt: session.expiresAt || null });
+      // LIVENESS: with a claim on the session, arm the flow rider —
+      // renewal rides the conversation flow (no timer process).
+      this.flowRider = null;
+      if (this.livenessClient && session.liveness && session.liveness.passed) {
+        const atMs = Date.parse(session.liveness.at);
+        this.flowRider = this.livenessClient.createFlowRider({
+          sessionToken: session.sessionToken,
+          initialAttestedAt: Number.isFinite(atMs) ? atMs : Date.now(),
+        });
+        this._note('liveness-session', { level: session.liveness.level || null });
+      }
       return true;
     } catch (e) {
       this.sessionToken = null;
+      this.flowRider = null;
       this._note('gateway-failed', { error: String((e && e.message) || e) });
       return false;
+    }
+  }
+
+  /** The node's chat gate flagged a turn recheckRequired (the claim
+   * went stale while the conversation was quiet, or the startup
+   * scan blocked live sessions): run a FULL re-check — flash plus a
+   * fresh generated cognitive prompt — and land it via the refresh
+   * mount. The flagged turn already got the graceful scripted
+   * fallback from the gate; the agent continues on the next turn.
+   * Never throws, never freezes. */
+  async _handleLivenessRecheck() {
+    this._note('liveness-recheck');
+    if (!this.flowRider) return;
+    try {
+      const ok = await this.flowRider.handleRecheck();
+      this._note(ok ? 'liveness-rechecked' : 'liveness-recheck-failed');
+    } catch (e) {
+      this._note('liveness-recheck-failed', { error: String((e && e.message) || e) });
     }
   }
 
@@ -762,6 +833,7 @@ class AvatarConnection {
       onLink: (linkObj) => this.cb.onLink && this.cb.onLink(linkObj),
       onDone: () => this.cb.onTurnComplete && this.cb.onTurnComplete(),
       onError: (e) => this._note('claude-error', { error: String((e && e.message) || e) }),
+      onLivenessRecheck: () => { this._handleLivenessRecheck(); },
       onEscalation: () => this._note('escalation', { transport: 'claude' }),
     });
     await this.claude.connect();
@@ -779,6 +851,7 @@ class AvatarConnection {
       onLink: (linkObj) => this.cb.onLink && this.cb.onLink(linkObj),
       onDone: () => this.cb.onTurnComplete && this.cb.onTurnComplete(),
       onError: (e) => this._note('verified-error', { error: String((e && e.message) || e) }),
+      onLivenessRecheck: () => { this._handleLivenessRecheck(); },
     });
     await this.verified.connect();
     this._setState('connected', 'verified');
@@ -797,8 +870,20 @@ class AvatarConnection {
       (this.transport === 'verified' && this.verified)
     ) {
       const pipe = this.transport === 'claude' ? this.claude : this.verified;
+      // LIVENESS flow rider: while the claim is comfortably fresh
+      // this returns {} and the turn goes out as-is; near-stale it
+      // runs a quiet flash check and the turn carries a renewal CAT
+      // the node's chat gate consumes.
+      let livenessCat = null;
+      if (this.flowRider) {
+        try {
+          const extra = await this.flowRider.prepareTurn();
+          if (extra && typeof extra.livenessCat === 'string') livenessCat = extra.livenessCat;
+        } catch {}
+      }
       try {
-        await pipe.send(text);
+        await pipe.send(text, livenessCat);
+        if (livenessCat && this.flowRider) this.flowRider.noteAttested(Date.now());
       } catch (e) {
         // A 401 means the gateway session token expired or was
         // rejected: re-handshake ONCE and retry the turn on the fresh
@@ -851,6 +936,7 @@ class AvatarConnection {
     this._note('ended', { transport: this.transport });
     if (this.live) this.live.close();
     this.sessionToken = null; // a fresh tap runs a fresh gateway handshake
+    this.flowRider = null;
     this._setState('idle', null);
   }
 }

@@ -97,6 +97,7 @@
       }
     },
     start(conn) {
+      if (this.rec) return true;
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) return false;
       this.wanted = true;
@@ -106,7 +107,18 @@
       rec.lang = 'en-US';
       rec.onresult = (e) => {
         for (let i = e.resultIndex; i < e.results.length; i++) {
-          if (e.results[i].isFinal) conn.hear(e.results[i][0].transcript);
+          if (e.results[i].isFinal) {
+            const text = e.results[i][0].transcript;
+            // A pending liveness cognitive prompt consumes the
+            // answer instead of treating it as a chat turn.
+            if (promptResolver) {
+              const resolve = promptResolver;
+              promptResolver = null;
+              resolve(text);
+            } else {
+              conn.hear(text);
+            }
+          }
         }
       };
       rec.onend = () => this.arm();
@@ -120,6 +132,142 @@
       this.rec = null;
     },
   };
+
+  /* ---------- EZ Peasy liveness-at-touch adapters (go-live
+   * 2026-11-17, Henry's word) ----------
+   * The REAL device adapters for js/liveness-client.js, wired at
+   * connection time per the staged package's plan:
+   *   screen — a full-screen white flash overlay; the challenge
+   *     pattern drives its opacity (quiet variant for renewals).
+   *   camera — getUserMedia on the visitor's own device; each flash
+   *     step samples the CENTER region's average luminance from a
+   *     64x64 canvas. Frames are processed on-device and discarded —
+   *     only the per-step number ever leaves the device. The stream
+   *     stops as soon as a check's verify call returns.
+   *   prompt — the generated cognitive question is SPOKEN by the
+   *     avatar and the visitor's spoken (or typed) answer resolves
+   *     it, through the same recognition path as the conversation.
+   * Any adapter failure fails the check closed: the page stays on
+   * the tokenless graceful fallback, never frozen. */
+  let promptResolver = null;
+
+  let flashEl = null;
+  function flashOverlay() {
+    if (!flashEl) {
+      flashEl = document.createElement('div');
+      flashEl.style.cssText =
+        'position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:60;transition:opacity 60ms linear;';
+      document.body.appendChild(flashEl);
+    }
+    return flashEl;
+  }
+  const screenAdapter = {
+    async setBrightness(level) {
+      flashOverlay().style.opacity = String(Math.max(0, Math.min(1, level)) * 0.9);
+    },
+    async setBrightnessQuiet(level) {
+      flashOverlay().style.opacity = String(Math.max(0, Math.min(1, level)) * 0.4);
+    },
+    async restore() {
+      if (flashEl) flashEl.style.opacity = '0';
+    },
+  };
+
+  const cameraAdapter = {
+    stream: null,
+    video: null,
+    canvas: null,
+    async _ensure() {
+      if (this.stream) return true;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' },
+        audio: false,
+      });
+      this.video = document.createElement('video');
+      this.video.playsInline = true;
+      this.video.muted = true;
+      this.video.srcObject = this.stream;
+      await this.video.play();
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = 64;
+      this.canvas.height = 64;
+      return true;
+    },
+    async sampleStepLuminance() {
+      let ok = false;
+      try {
+        ok = await this._ensure();
+      } catch {
+        ok = false;
+      }
+      if (!ok || !this.video) return 0.5; // no camera: flat series — the check fails honestly to fallback
+      await new Promise((r) => setTimeout(r, 350));
+      try {
+        const ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(this.video, 0, 0, 64, 64);
+        const d = ctx.getImageData(16, 16, 32, 32).data;
+        let sum = 0;
+        let n = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          sum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+          n++;
+        }
+        return n ? sum / n : 0;
+      } catch {
+        return 0.5;
+      }
+    },
+    sourceKind() {
+      return 'device-camera';
+    },
+    stop() {
+      if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = null;
+      this.video = null;
+    },
+  };
+
+  const livenessApiAdapter = {
+    async post(path, body) {
+      const res = await fetch(C.DEFAULT_WORKER_URL + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+      const data = await res.json().catch(() => null);
+      if (path === '/api/liveness-verify') cameraAdapter.stop();
+      return { status: res.status, body: data };
+    },
+  };
+
+  const promptAdapter = {
+    ask(question) {
+      return new Promise((resolve) => {
+        let settled = false;
+        const done = (value) => {
+          if (settled) return;
+          settled = true;
+          if (promptResolver === done) promptResolver = null;
+          resolve(value || '');
+        };
+        promptResolver = done;
+        tts.speak(question);
+        if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) showTypedInput();
+        setTimeout(() => done(''), 30000);
+      });
+    },
+  };
+
+  const livenessClient =
+    window.GodworldLiveness && typeof window.GodworldLiveness.createLivenessClient === 'function'
+      ? window.GodworldLiveness.createLivenessClient({
+          api: livenessApiAdapter,
+          screen: screenAdapter,
+          camera: cameraAdapter,
+          prompt: promptAdapter,
+        })
+      : null;
 
   /* ---------- door card helpers ---------- */
   function hideDoorCard() {
@@ -167,6 +315,10 @@
     // client storefronts default to 'background' (sub-agent session).
     sessionGateway: true,
     sessionMode: 'audible',
+    // LIVENESS (go-live 2026-11-17): the EZ Peasy liveness-at-touch
+    // check runs inside the gateway handshake, on this device,
+    // before the session connects (adapters above).
+    livenessClient,
     callbacks: {
       onState(state, transport) {
         document.body.dataset.state = state;
@@ -228,6 +380,14 @@
       const text = typedInput.value.trim();
       if (!text) return;
       typedInput.value = '';
+      // A pending liveness cognitive prompt consumes the typed
+      // answer instead of treating it as a chat turn.
+      if (promptResolver) {
+        const resolve = promptResolver;
+        promptResolver = null;
+        resolve(text);
+        return;
+      }
       conn.hear(text);
     });
     // Taps inside the form must not retrigger the screen-tap connect.
@@ -255,6 +415,9 @@
     unlockAudio();
     hideDoorCard();
     if (conn.state === 'idle' || conn.state === 'dropped' || conn.state === 'blocked') {
+      // Start listening BEFORE the handshake: the liveness check's
+      // generated cognitive prompt is answered by voice during it.
+      recognition.start(conn);
       conn.connect();
     }
   });
