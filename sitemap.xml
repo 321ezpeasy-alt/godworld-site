@@ -281,6 +281,11 @@
     <priority>0.6</priority>
   </url>
   <url>
+    <loc>https://godworld.org/portfolio/synergetics/</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
     <loc>https://godworld.org/portfolio/the-groom-room/</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
@@ -597,16 +602,6 @@
   </url>
   <url>
     <loc>https://godworld.org/atrium/west-em-medical-spa/</loc>
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
-  </url>
-  <url>
-    <loc>https://godworld.org/portfolio/cortex-innovation-community/</loc>
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
-  </url>
-  <url>
-    <loc>https://godworld.org/portfolio/trex/</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
