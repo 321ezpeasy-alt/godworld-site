@@ -301,6 +301,47 @@
   // open/close cycle instead of a level.
   const ttsMouth = C.createSyllableMouth ? C.createSyllableMouth() : null;
 
+  /* ---------- the RTC call (from-scratch call leg, 2026-11-17) ----------
+   * On a connected gateway session, the call client asks the Worker to
+   * authorize the call (established gate), publishes the visitor's mic
+   * to the Cloudflare Calls SFU, and pulls the agent endpoint's audio.
+   * When the agent's track is live, ITS audio drives the jaw (callMouth
+   * below takes priority in the render loop) and the page-side voice
+   * transports stand down so there is exactly one voice: the agent on
+   * the call. If the call cannot be established, onFallback leaves the
+   * existing conversation exactly as it was. */
+  let callClient = null;
+  let callMouth = null;
+  let callLive = false;
+  let callStartedFor = null;
+  function maybeStartCall() {
+    if (!window.GodworldCall || !conn.sessionToken || !conn.sessionId) return;
+    if (callStartedFor === conn.sessionId) return;
+    callStartedFor = conn.sessionId;
+    callClient = window.GodworldCall.createCallClient({
+      workerUrl: C.DEFAULT_WORKER_URL,
+      remoteAudio: document.getElementById('remoteAudio'),
+      callbacks: {
+        onMouth(v) { callMouth = v; },
+        onState(st) { document.body.dataset.callState = st; },
+        onEvent(ev) {
+          if (ev && ev.type === 'agent-track-live') {
+            callLive = true;
+            document.body.dataset.call = 'live';
+            try { recognition.stop(); } catch {}
+            try { tts.cancel(); } catch {}
+            setStatus('Connected — speak any time');
+          }
+        },
+        onFallback(reason) {
+          document.body.dataset.call = 'fallback:' + reason;
+          callLive = false;
+        },
+      },
+    });
+    callClient.start({ sessionToken: conn.sessionToken, sessionId: conn.sessionId }).catch(() => {});
+  }
+
   const conn = new C.AvatarConnection(env, {
     tokenEndpoint: C.DEFAULT_WORKER_URL + '/api/live-token',
     workerUrl: C.DEFAULT_WORKER_URL,
@@ -325,6 +366,7 @@
         document.body.dataset.transport = transport || '';
         if (state === 'connecting') setStatus('Connecting…');
         if (state === 'connected') {
+          maybeStartCall();
           cue.classList.add('hidden');
           setStatus(
             transport === 'scripted' ? 'Connected — basic mode' : 'Connected — speak any time'
@@ -432,7 +474,11 @@
   /* ---------- jaw + presence render loop (hardening #6) ---------- */
   function render(nowMs) {
     const now = typeof nowMs === 'number' ? nowMs : 0;
-    if (conn.transport === 'live') {
+    if (callLive && callMouth !== null) {
+      // The agent's real call audio drives the jaw.
+      mouthOpen = callMouth;
+      if (ttsMouth) ttsMouth.update(now, false);
+    } else if (conn.transport === 'live') {
       const level = conn.isSpeaking() ? conn.getPlaybackLevel() : conn.getMicLevel() * 0.6;
       mouthOpen = C.mouthOpenFromLevel(level, mouthOpen);
       if (ttsMouth) ttsMouth.update(now, false);
