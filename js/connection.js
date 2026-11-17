@@ -108,6 +108,52 @@ function mouthOpenFromLevel(level, prev) {
   return prev + (target - prev) * 0.55;
 }
 
+/* ---------------- syllable mouth driver (TTS transports) ----------------
+ * speechSynthesis audio cannot be routed through a WebAudio analyser
+ * (the browser plays it outside the page's audio graph), so the TTS
+ * transports get no real level signal. The previous stand-in — a
+ * 0.35-floor sine envelope fed through mouthOpenFromLevel — saturated:
+ * its target never fell below 0.91 (0.35 x 2.6), so the jaw pinned at
+ * maximum within ~10 frames and stayed there for whole utterances.
+ * The mouth visibly never opened or closed (Henry's live report,
+ * 2026-11-16 19:47 CST). This driver produces a true open/close cycle
+ * at syllable rate instead: alternating open targets (0.55-1.0, held
+ * 90-230 ms) and near-closed targets (0.02-0.2, held 50-160 ms),
+ * approached with asymmetric easing (fast open, softer close). While
+ * not speaking the target is 0 and the mouth settles shut. */
+function createSyllableMouth(random) {
+  const rand = typeof random === 'function' ? random : Math.random;
+  let value = 0;
+  let target = 0;
+  let until = 0;
+  let openPhase = false;
+  return {
+    update(nowMs, speaking) {
+      if (!speaking) {
+        target = 0;
+        openPhase = false;
+        until = 0;
+      } else if (nowMs >= until) {
+        openPhase = !openPhase;
+        if (openPhase) {
+          target = 0.55 + rand() * 0.45;
+          until = nowMs + 90 + rand() * 140;
+        } else {
+          target = 0.02 + rand() * 0.18;
+          until = nowMs + 50 + rand() * 110;
+        }
+      }
+      const rate = target > value ? 0.5 : 0.38;
+      value += (target - value) * rate;
+      if (!speaking && value < 0.01) value = 0;
+      return value;
+    },
+    get value() {
+      return value;
+    },
+  };
+}
+
 /* ---------------- playback queue (hardening #2 + #6 + #8) ---------------- */
 
 class PlaybackQueue {
@@ -725,6 +771,7 @@ const api = {
   pcm16Base64ToFloat32,
   rmsLevel,
   mouthOpenFromLevel,
+  createSyllableMouth,
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = api;

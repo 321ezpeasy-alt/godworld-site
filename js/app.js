@@ -58,11 +58,6 @@
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.02;
       this.speaking = true;
-      // Word boundaries pulse the jaw envelope so the jaw movement tracks
-      // the actual speech rhythm, not just a free-running wave.
-      u.onboundary = () => {
-        ttsPhase += 0.9;
-      };
       u.onend = u.onerror = () => {
         this.speaking = false;
         recognition.arm();
@@ -125,7 +120,11 @@
 
   /* ---------- the connection ---------- */
   let mouthOpen = 0;
-  let ttsPhase = 0;
+  // Syllable-rate mouth driver for the TTS transports (see connection.js):
+  // speechSynthesis gives no analysable audio stream, so while the
+  // claude/verified/scripted voice talks, the jaw runs on this driver's
+  // open/close cycle instead of a level.
+  const ttsMouth = C.createSyllableMouth ? C.createSyllableMouth() : null;
 
   const conn = new C.AvatarConnection(env, {
     tokenEndpoint: C.DEFAULT_WORKER_URL + '/api/live-token',
@@ -227,24 +226,26 @@
   });
 
   /* ---------- jaw + presence render loop (hardening #6) ---------- */
-  function render() {
-    let level = 0;
+  function render(nowMs) {
+    const now = typeof nowMs === 'number' ? nowMs : 0;
     if (conn.transport === 'live') {
-      level = conn.isSpeaking() ? conn.getPlaybackLevel() : conn.getMicLevel() * 0.6;
-    } else if (tts.speaking) {
+      const level = conn.isSpeaking() ? conn.getPlaybackLevel() : conn.getMicLevel() * 0.6;
+      mouthOpen = C.mouthOpenFromLevel(level, mouthOpen);
+      if (ttsMouth) ttsMouth.update(now, false);
+    } else if (tts.speaking && ttsMouth) {
       // speechSynthesis exposes no audio stream to analyse; the jaw is
-      // driven by a speech-envelope (paced by utterance boundary events)
-      // while the claude/verified/scripted voice talks — the same
-      // level -> jaw binding the live transport feeds from its analyser.
-      ttsPhase += 0.35;
-      level = 0.35 + 0.3 * Math.abs(Math.sin(ttsPhase)) * Math.random();
+      // driven by the syllable mouth driver's open/close cycle while
+      // the claude/verified/scripted voice talks.
+      mouthOpen = ttsMouth.update(now, true);
+    } else {
+      if (ttsMouth) ttsMouth.update(now, false);
+      mouthOpen = C.mouthOpenFromLevel(0, mouthOpen);
     }
-    mouthOpen = C.mouthOpenFromLevel(level, mouthOpen);
     // mouthOpen now drives ONLY the jaw layer: the clipped portrait copy
-    // drops by up to 6px. #jaw's clip-path (top edge at 54% of the frame)
+    // drops by up to 10px. #jaw's clip-path (top edge at 54% of the frame)
     // makes it impossible for this transform to alter anything near the
     // eyes (~40-42%). No dark overlay is drawn anywhere on the face.
-    const jawPx = mouthOpen * 6;
+    const jawPx = mouthOpen * 10;
     if (jawImg) jawImg.style.transform = `translateY(${jawPx.toFixed(1)}px)`;
     frame.style.transform = `scale(${(1 + mouthOpen * 0.006).toFixed(4)})`;
     requestAnimationFrame(render);
