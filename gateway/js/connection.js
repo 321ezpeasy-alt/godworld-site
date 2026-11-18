@@ -1,0 +1,1046 @@
+'use strict';
+/*
+ * connection.js — the live CONNECTION client for the godworld.org front door.
+ *
+ * Henry's framing governs: this is a CONNECTION, not a call. Touching the
+ * site opens it; the agent (theTruth AI) is in it in the background; Henry
+ * is not in it.
+ *
+ * Transports, in order (DEFAULT mode 'claude-first' — Henry's correction
+ * 2026-11-16 ~14:10 CST: the connection he ordered is to his CLAUDE agent,
+ * theTruth AI brain — NOT a Gemini link):
+ *   1. claude   — the Muse agent powering the avatar. The visitor's
+ *                 words (browser speech recognition, or typed input when
+ *                 recognition is unavailable) go to the EXISTING verified
+ *                 brain pipeline: page -> Worker /api/chat (NDJSON
+ *                 sentence stream) -> BrainHub -> brain node (reservoir
+ *                 -> draft -> Claudia verification gate -> speak, with
+ *                 the scripted floor inside the pipeline). The pipeline's
+ *                 answers are what the avatar voices, via the page's
+ *                 speech synthesis; playback drives the mouth. This is
+ *                 turn-based voice (speak -> answer -> speak), not
+ *                 full-duplex streaming.
+ *   2. verified — the same /api/chat pipe, used as the text-pipeline
+ *                 fallback if the claude transport's connect fails.
+ *   3. scripted — a small local floor of grounded answers, spoken via
+ *                 speechSynthesis, when both network paths are down.
+ *                 The avatar never goes silent.
+ *   legacy: live — Gemini Live API over WebSocket (ephemeral token).
+ *                 Retained in the tree ONLY as an explicitly-configured
+ *                 legacy mode ('live-first'). It is never the default
+ *                 and is never the avatar's described power source.
+ *
+ * The module is environment-injectable (WebSocket, fetch, AudioContext,
+ * getUserMedia are passed in) so the exact shipping code is testable
+ * outside a browser. No keys appear here — the page only ever holds a
+ * single-use ephemeral token, fetched at connect time.
+ *
+ * SESSION GATEWAY (Henry's locked flow, 2026-11-16 ~20:40 CST): before
+ * the claude/verified transports connect, the client runs the gateway
+ * handshake against the Worker — POST /api/session-nonce, then POST
+ * /api/session-exchange — exchanging a one-time nonce for a
+ * short-lived session token bound to a server-minted sessionId and a
+ * session MODE ('background' default; 'audible' = owner-join, chosen
+ * by Henry's own front door in app.js). The token rides every
+ * /api/chat turn (Authorization header + body field) and the brain
+ * node validates it; a 401 mid-conversation triggers ONE silent
+ * re-handshake and retry before the scripted floor. The gateway
+ * authenticates the session only — the answers still come solely from
+ * the verified pipeline. The legacy live transport does not use the
+ * gateway (its own ephemeral-token path, above).
+ *
+ * LIVENESS (go-live 2026-11-17, Henry's word): when the page wires a
+ * liveness client (js/liveness-client.js + the device adapters in
+ * app.js), the handshake runs the EZ Peasy liveness-at-touch check
+ * on the visitor's device BETWEEN the nonce and the exchange —
+ * camera flash challenge + a cognitive prompt generated fresh per
+ * check — and the exchange carries the resulting CAT; the session
+ * token comes back with the liveness claim. A flow rider then
+ * renews the attestation through the conversation itself (a quiet
+ * flash CAT rides a turn when the claim nears stale; a turn the
+ * node flags recheckRequired triggers a full re-check). Any failure
+ * leaves the page on the tokenless graceful fallback — no freeze.
+ */
+
+const LIVE_MODEL = 'models/gemini-2.5-flash-native-audio-latest';
+const LIVE_WS_URL =
+  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained';
+const DEFAULT_WORKER_URL = 'https://godworld-storefront.321ezpeasy.workers.dev';
+const MIC_SAMPLE_RATE = 16000;
+const PLAYBACK_SAMPLE_RATE = 24000;
+const JITTER_BUFFER_MS = 120; // hardening #2: absorb network stalls
+const OUTPUT_CEILING = 0.9; // hardening #8: playback level ceiling
+
+const INTRO_LINE =
+  "Hi, I'm theTruth AI, the digital twin of Henry theTruth Kennemore, founder of godworld.org.";
+
+const LIVE_SYSTEM_INSTRUCTION = [
+  'You are theTruth AI, the digital twin of Henry theTruth Kennemore, founder of godworld.org.',
+  'You host the Super Intelligent Designs website builder. You speak warmly, plainly, and briefly — one or two short sentences at a time, like a person talking, never a list.',
+  'Facts you may state: a business\'s first website is free; turning on the interactive version is a one-time $100 activation — no subscription and no monthly fee; hosting and maintenance are free while the site stays unchanged; the interactive version launches in January 2027 and pre-launch reservations are refundable until a site is delivered live; the Archangel 8 TriPhone costs $750.',
+  'Never invent prices, features, dates, or policies beyond those facts. If you do not know something, say you would rather connect them with Henry than give them the wrong answer.',
+  'The owner always stays in charge: you gather details and never finalize a commitment on anyone\'s behalf.',
+].join(' ');
+
+/* ---------------- base64 / PCM helpers ---------------- */
+
+function bytesToBase64(bytes) {
+  if (typeof Buffer !== 'undefined') return Buffer.from(bytes).toString('base64');
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(s);
+}
+
+function base64ToBytes(b64) {
+  if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(b64, 'base64'));
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/** Float32 samples [-1,1] -> base64 PCM16 little-endian (mic uplink). */
+function floatToPcm16Base64(float32) {
+  const bytes = new Uint8Array(float32.length * 2);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < float32.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return bytesToBase64(bytes);
+}
+
+/** base64 PCM16 little-endian -> Float32 samples (playback downlink). */
+function pcm16Base64ToFloat32(b64) {
+  const bytes = base64ToBytes(b64);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const out = new Float32Array(Math.floor(bytes.byteLength / 2));
+  for (let i = 0; i < out.length; i++) out[i] = view.getInt16(i * 2, true) / 0x8000;
+  return out;
+}
+
+function rmsLevel(float32) {
+  if (!float32.length) return 0;
+  let sum = 0;
+  for (let i = 0; i < float32.length; i++) sum += float32[i] * float32[i];
+  return Math.sqrt(sum / float32.length);
+}
+
+/** Map an audio level to a mouth-open amount, eased (hardening #6). */
+function mouthOpenFromLevel(level, prev) {
+  const target = Math.max(0, Math.min(1, level * 2.6));
+  return prev + (target - prev) * 0.55;
+}
+
+/* ---------------- syllable mouth driver (TTS transports) ----------------
+ * speechSynthesis audio cannot be routed through a WebAudio analyser
+ * (the browser plays it outside the page's audio graph), so the TTS
+ * transports get no real level signal. The previous stand-in — a
+ * 0.35-floor sine envelope fed through mouthOpenFromLevel — saturated:
+ * its target never fell below 0.91 (0.35 x 2.6), so the jaw pinned at
+ * maximum within ~10 frames and stayed there for whole utterances.
+ * The mouth visibly never opened or closed (Henry's live report,
+ * 2026-11-16 19:47 CST). This driver produces a true open/close cycle
+ * at syllable rate instead: alternating open targets (0.55-1.0, held
+ * 90-230 ms) and near-closed targets (0.02-0.2, held 50-160 ms),
+ * approached with asymmetric easing (fast open, softer close). While
+ * not speaking the target is 0 and the mouth settles shut. */
+function createSyllableMouth(random) {
+  const rand = typeof random === 'function' ? random : Math.random;
+  let value = 0;
+  let target = 0;
+  let until = 0;
+  let openPhase = false;
+  return {
+    update(nowMs, speaking) {
+      if (!speaking) {
+        target = 0;
+        openPhase = false;
+        until = 0;
+      } else if (nowMs >= until) {
+        openPhase = !openPhase;
+        if (openPhase) {
+          target = 0.55 + rand() * 0.45;
+          until = nowMs + 90 + rand() * 140;
+        } else {
+          target = 0.02 + rand() * 0.18;
+          until = nowMs + 50 + rand() * 110;
+        }
+      }
+      const rate = target > value ? 0.5 : 0.38;
+      value += (target - value) * rate;
+      if (!speaking && value < 0.01) value = 0;
+      return value;
+    },
+    get value() {
+      return value;
+    },
+  };
+}
+
+/* ---------------- playback queue (hardening #2 + #6 + #8) ---------------- */
+
+class PlaybackQueue {
+  constructor(audioContext) {
+    this.ctx = audioContext;
+    this.analyser = audioContext.createAnalyser();
+    this.analyser.fftSize = 512;
+    this.gain = audioContext.createGain();
+    this.gain.gain.value = OUTPUT_CEILING;
+    this.compressor = audioContext.createDynamicsCompressor();
+    // chain: sources -> analyser -> gain -> compressor -> destination
+    this.analyser.connect(this.gain);
+    this.gain.connect(this.compressor);
+    this.compressor.connect(audioContext.destination);
+    this.nextStartTime = 0;
+    this.scheduledSamples = 0;
+    this.underruns = 0;
+    this._levelBuf = new Uint8Array(this.analyser.fftSize);
+  }
+
+  pushPcmBase64(b64, sampleRate = PLAYBACK_SAMPLE_RATE) {
+    const samples = pcm16Base64ToFloat32(b64);
+    if (!samples.length) return;
+    const buffer = this.ctx.createBuffer(1, samples.length, sampleRate);
+    buffer.getChannelData(0).set(samples);
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.analyser);
+    const now = this.ctx.currentTime;
+    if (this.nextStartTime <= now) {
+      // underrun (or first chunk): re-fill the jitter buffer before playing
+      if (this.scheduledSamples > 0) this.underruns++;
+      this.nextStartTime = now + JITTER_BUFFER_MS / 1000;
+    }
+    source.start(this.nextStartTime);
+    this.nextStartTime += buffer.duration;
+    this.scheduledSamples += samples.length;
+  }
+
+  /** True while scheduled audio is still sounding. */
+  isPlaying() {
+    return this.nextStartTime > this.ctx.currentTime + 0.02;
+  }
+
+  /** Current output level 0..1 from the analyser (drives the mouth). */
+  getLevel() {
+    if (!this.isPlaying()) return 0;
+    this.analyser.getByteTimeDomainData(this._levelBuf);
+    let sum = 0;
+    for (let i = 0; i < this._levelBuf.length; i++) {
+      const v = (this._levelBuf[i] - 128) / 128;
+      sum += v * v;
+    }
+    return Math.sqrt(sum / this._levelBuf.length);
+  }
+
+  flush() {
+    this.nextStartTime = 0;
+  }
+}
+
+/* ---------------- Live transport (LEGACY — Gemini Live via ephemeral token) ----------------
+ * Retained for the explicit 'live-first' legacy mode only. Per Henry's
+ * 2026-11-16 correction this is NOT the connection he ordered and must
+ * never be the default or be described as the agent powering the site. */
+
+class LiveTransport {
+  constructor(env, callbacks) {
+    this.env = env;
+    this.cb = callbacks;
+    this.ws = null;
+    this.playback = null;
+    this.micStream = null;
+    this.micContext = null;
+    this.intentionalClose = false;
+    this.setupComplete = false;
+  }
+
+  async fetchToken(tokenEndpoint) {
+    const res = await this.env.fetch(tokenEndpoint, { method: 'POST' });
+    if (!res.ok) throw new Error(`token endpoint HTTP ${res.status}`);
+    const payload = await res.json();
+    if (!payload || typeof payload.token !== 'string') throw new Error('token endpoint returned no token');
+    return payload.token;
+  }
+
+  async connect(tokenEndpoint) {
+    const token = await this.fetchToken(tokenEndpoint);
+    const url = `${LIVE_WS_URL}?access_token=${encodeURIComponent(token)}`;
+    const ws = this.env.createWebSocket(url);
+    this.ws = ws;
+    this.playback = new PlaybackQueue(this.env.createAudioContext({ sampleRate: PLAYBACK_SAMPLE_RATE }));
+
+    const opened = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('live setup timeout')), 15000);
+      ws.addEventListener('open', () => {
+        ws.send(
+          JSON.stringify({
+            setup: {
+              model: LIVE_MODEL,
+              generationConfig: { responseModalities: ['AUDIO'] },
+              systemInstruction: { parts: [{ text: LIVE_SYSTEM_INSTRUCTION }] },
+              inputAudioTranscription: {},
+              outputAudioTranscription: {},
+            },
+          })
+        );
+      });
+      ws.addEventListener('message', async (ev) => {
+        const msg = await this._parseMessage(ev);
+        if (!msg) return;
+        if (msg.setupComplete !== undefined && !this.setupComplete) {
+          this.setupComplete = true;
+          clearTimeout(timer);
+          resolve();
+        }
+        this._handleMessage(msg);
+      });
+      ws.addEventListener('error', () => {
+        if (!this.setupComplete) {
+          clearTimeout(timer);
+          reject(new Error('live socket error'));
+        }
+      });
+      ws.addEventListener('close', () => {
+        if (!this.intentionalClose) this.cb.onDrop && this.cb.onDrop('live-socket-closed');
+      });
+    });
+
+    await opened;
+    const micOk = await this._startMic();
+    return { transport: 'live', micOk };
+  }
+
+  async _parseMessage(ev) {
+    let text = ev.data;
+    if (typeof text !== 'string') {
+      if (text && typeof text.text === 'function') text = await text.text();
+      else if (text instanceof ArrayBuffer) text = new TextDecoder().decode(text);
+      else if (typeof Buffer !== 'undefined' && Buffer.isBuffer(text)) text = text.toString('utf8');
+      else return null;
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
+  _handleMessage(msg) {
+    const sc = msg.serverContent;
+    if (!sc) return;
+    if (sc.interrupted) {
+      this.playback.flush();
+      this.cb.onInterrupted && this.cb.onInterrupted();
+    }
+    const parts = (sc.modelTurn && sc.modelTurn.parts) || [];
+    for (const part of parts) {
+      if (part.inlineData && part.inlineData.data) {
+        this.playback.pushPcmBase64(part.inlineData.data, PLAYBACK_SAMPLE_RATE);
+        this.cb.onAudioChunk && this.cb.onAudioChunk(part.inlineData.data);
+      }
+    }
+    if (sc.outputTranscription && sc.outputTranscription.text) {
+      this.cb.onText && this.cb.onText(sc.outputTranscription.text, 'avatar');
+    }
+    if (sc.inputTranscription && sc.inputTranscription.text) {
+      this.cb.onText && this.cb.onText(sc.inputTranscription.text, 'visitor');
+    }
+    if (sc.turnComplete) this.cb.onTurnComplete && this.cb.onTurnComplete();
+  }
+
+  async _startMic() {
+    if (!this.env.getUserMedia) {
+      this.cb.onMicUnavailable && this.cb.onMicUnavailable('getUserMedia unsupported');
+      return false;
+    }
+    try {
+      // hardening #5: echo cancellation, noise suppression, auto-gain ON
+      this.micStream = await this.env.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (e) {
+      this.cb.onMicUnavailable && this.cb.onMicUnavailable(String((e && e.name) || e));
+      return false;
+    }
+    const ctx = this.env.createAudioContext({ sampleRate: MIC_SAMPLE_RATE });
+    this.micContext = ctx;
+    const source = ctx.createMediaStreamSource(this.micStream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const levelBuf = new Uint8Array(analyser.fftSize);
+    this._micLevel = () => {
+      analyser.getByteTimeDomainData(levelBuf);
+      let sum = 0;
+      for (let i = 0; i < levelBuf.length; i++) {
+        const v = (levelBuf[i] - 128) / 128;
+        sum += v * v;
+      }
+      return Math.sqrt(sum / levelBuf.length);
+    };
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    source.connect(processor);
+    processor.connect(ctx.destination);
+    processor.onaudioprocess = (e) => {
+      if (!this.ws || this.ws.readyState !== 1) return;
+      const samples = e.inputBuffer.getChannelData(0);
+      this.ws.send(
+        JSON.stringify({
+          realtimeInput: {
+            mediaChunks: [{ mimeType: `audio/pcm;rate=${MIC_SAMPLE_RATE}`, data: floatToPcm16Base64(samples) }],
+          },
+        })
+      );
+    };
+    this._micProcessor = processor;
+    return true;
+  }
+
+  getPlaybackLevel() {
+    return this.playback ? this.playback.getLevel() : 0;
+  }
+
+  getMicLevel() {
+    return this._micLevel ? this._micLevel() : 0;
+  }
+
+  isSpeaking() {
+    return this.playback ? this.playback.isPlaying() : false;
+  }
+
+  /** Ask the model to say a line (used for the standing introduction). */
+  sayLine(line) {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    this.ws.send(
+      JSON.stringify({
+        clientContent: {
+          turns: [
+            {
+              role: 'user',
+              parts: [{ text: `Greet me by saying exactly this, word for word, and nothing before it: "${line}" Then ask what you can help with today.` }],
+            },
+          ],
+          turnComplete: true,
+        },
+      })
+    );
+  }
+
+  sendText(text) {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    this.ws.send(
+      JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text }] }], turnComplete: true } })
+    );
+  }
+
+  close() {
+    this.intentionalClose = true;
+    try {
+      if (this._micProcessor) this._micProcessor.disconnect();
+    } catch {}
+    try {
+      if (this.micStream) this.micStream.getTracks().forEach((t) => t.stop());
+    } catch {}
+    try {
+      if (this.micContext) this.micContext.close();
+    } catch {}
+    try {
+      if (this.ws) this.ws.close();
+    } catch {}
+  }
+}
+
+/* ---------------- Session gateway handshake ----------------
+ * POST /api/session-nonce -> { nonce, expiresAt }
+ * POST /api/session-exchange { nonce, mode } ->
+ *   { sessionToken, sessionId, mode, expiresAt, expiresIn }
+ * The nonce is single-use and lives ~2 minutes; the session token is
+ * short-lived (~30 min) and bound to the returned sessionId + mode.
+ * Throws on any failure — the caller decides the fallback. */
+async function startGatewaySession(fetchFn, workerUrl, mode, livenessClient) {
+  // LIVENESS (go-live 2026-11-17, Henry's word): when a liveness
+  // client is wired (the front door wires one — see app.js), the
+  // handshake IS the EZ Peasy liveness-at-touch flow: nonce ->
+  // on-device check (flash + generated cognitive) -> CAT -> exchange
+  // with the CAT. The session token comes back carrying the liveness
+  // claim. Any failure throws — the caller falls back to the
+  // tokenless path exactly as a gateway failure does today.
+  if (livenessClient) {
+    const hs = await livenessClient.livenessHandshake({ mode: mode || 'background' });
+    if (!hs.ok || !hs.session) {
+      throw new Error(`liveness handshake failed: ${hs.reason || 'unknown'}`);
+    }
+    if (typeof hs.session.sessionToken !== 'string' || typeof hs.session.sessionId !== 'string') {
+      throw new Error('session-exchange returned no session token');
+    }
+    return hs.session;
+  }
+  const nonceRes = await fetchFn(`${workerUrl}/api/session-nonce`, { method: 'POST' });
+  if (!nonceRes.ok) throw new Error(`session-nonce HTTP ${nonceRes.status}`);
+  const noncePayload = await nonceRes.json();
+  if (!noncePayload || typeof noncePayload.nonce !== 'string') {
+    throw new Error('session-nonce returned no nonce');
+  }
+  const exRes = await fetchFn(`${workerUrl}/api/session-exchange`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nonce: noncePayload.nonce, mode: mode || 'background' }),
+  });
+  if (!exRes.ok) throw new Error(`session-exchange HTTP ${exRes.status}`);
+  const payload = await exRes.json();
+  if (!payload || typeof payload.sessionToken !== 'string' || typeof payload.sessionId !== 'string') {
+    throw new Error('session-exchange returned no session token');
+  }
+  return payload;
+}
+
+/* ---------------- Verified transport (ARCHITECTURE.md pipeline) ---------------- */
+
+class VerifiedTransport {
+  constructor(env, { workerUrl, sessionId, getSessionToken, onSentence, onLink, onDone, onError, onLivenessRecheck }) {
+    this.env = env;
+    this.workerUrl = workerUrl;
+    this.sessionId = sessionId;
+    this.getSessionToken = typeof getSessionToken === 'function' ? getSessionToken : null;
+    this.onSentence = onSentence;
+    this.onLink = onLink;
+    this.onDone = onDone;
+    this.onError = onError;
+    this.onLivenessRecheck = onLivenessRecheck;
+  }
+
+  /** Reachability probe so a dead pipeline fails at connect, not mid-chat. */
+  async connect() {
+    const res = await this.env.fetch(`${this.workerUrl}/api/health`, { method: 'GET' });
+    if (!res.ok) throw new Error(`worker health HTTP ${res.status}`);
+    return { transport: 'verified' };
+  }
+
+  async send(message, livenessCat) {
+    let res;
+    const sessionToken = this.getSessionToken ? this.getSessionToken() : null;
+    try {
+      res = await this.env.fetch(`${this.workerUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+        },
+        // LIVENESS: a renewal CAT prepared by the flow rider rides
+        // the turn body; the node's chat gate consumes it.
+        body: JSON.stringify({ message, sessionId: this.sessionId, sessionToken, ...(livenessCat ? { livenessCat } : {}) }),
+      });
+    } catch (e) {
+      this.onError && this.onError(e);
+      throw e;
+    }
+    if (!res.ok || !res.body) {
+      const err = new Error(`chat HTTP ${res.status}`);
+      err.status = res.status; // the orchestrator re-handshakes once on 401
+      this.onError && this.onError(err);
+      throw err;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (!line) continue;
+        let obj;
+        try {
+          obj = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (obj.type === 'sentence' && obj.text) this.onSentence && this.onSentence(obj.text);
+        if (obj.type === 'link' && obj.url) this.onLink && this.onLink(obj);
+        if (obj.type === 'liveness' && obj.recheckRequired) this.onLivenessRecheck && this.onLivenessRecheck(obj);
+        if (obj.type === 'done') this.onDone && this.onDone();
+      }
+    }
+    // A final line without a trailing newline still counts.
+    const tail = buf.trim();
+    if (tail) {
+      try {
+        const obj = JSON.parse(tail);
+        if (obj.type === 'sentence' && obj.text) this.onSentence && this.onSentence(obj.text);
+        if (obj.type === 'link' && obj.url) this.onLink && this.onLink(obj);
+        if (obj.type === 'liveness' && obj.recheckRequired) this.onLivenessRecheck && this.onLivenessRecheck(obj);
+        if (obj.type === 'done') this.onDone && this.onDone();
+      } catch {}
+    }
+  }
+}
+
+/* ---------------- Claude connection (the agent powering the avatar) ----------------
+ *
+ * Henry's ordered connection: touching the site opens a connection to his
+ * Muse agent (theTruth AI brain); the agent takes it in the background
+ * and talks through the avatar; Henry is not in it. The agent's voice on
+ * the site IS the verified brain pipeline — the same pipe the verified
+ * transport uses — so this class rides VerifiedTransport's /api/chat
+ * stream and adds the connection semantics on top:
+ *   - connect() proves the agent's pipeline is reachable before the page
+ *     claims a connection.
+ *   - Every answer sentence the avatar speaks is a pipeline sentence,
+ *     verbatim — the avatar never voices anything the pipeline did not
+ *     return (so the Claudia gate and the scripted floor inside the
+ *     pipeline are inherited, not bypassed).
+ *   - Escalation honesty: when the pipeline returns its "get Henry"
+ *     class of answer, that sentence is spoken as-is and the turn is
+ *     noted as an escalation in the session record.
+ */
+const ESCALATION_PATTERN =
+  /rather connect you with Henry|rather you talk to Henry|talk to Henry than give you|get Henry|connect you with Henry/i;
+
+/* ---------------- Phone fallback (Henry's design, 2026-11-17) ----------------
+ * When no live path can hold the conversation — the pipeline's
+ * answer IS its escalation line, or the local scripted floor is
+ * all that's left — the visitor is offered the real ring: a
+ * tap-to-call button to Henry's TextNow number (the visitor's own
+ * phone dials it and Henry's phone rings), and the server writes
+ * Henry's ONE alert record for the session via /api/call-start.
+ * Fires at most once per session (see AvatarConnection). */
+const HENRY_TEL_URL = 'tel:+13142024304';
+const HENRY_PHONE_DISPLAY = '(314) 202-4304';
+const PHONE_ESCALATION_LINE =
+  "I've let Henry know you need him. Tap the Call Henry button on this page and your phone will ring him directly — or he'll join from the alert I just sent.";
+
+class ClaudeTransport extends VerifiedTransport {
+  constructor(env, opts) {
+    super(env, opts);
+    this.onEscalation = opts.onEscalation;
+    const pipelineOnSentence = this.onSentence;
+    this.onSentence = (text) => {
+      if (ESCALATION_PATTERN.test(text)) this.onEscalation && this.onEscalation(text);
+      pipelineOnSentence && pipelineOnSentence(text);
+    };
+  }
+
+  /** Reachability probe: the agent's pipeline must answer before we connect. */
+  async connect() {
+    const res = await this.env.fetch(`${this.workerUrl}/api/health`, { method: 'GET' });
+    if (!res.ok) throw new Error(`worker health HTTP ${res.status}`);
+    return { transport: 'claude' };
+  }
+}
+
+/* ---------------- Scripted floor (local, grounded) ---------------- */
+
+const FLOOR_ANSWERS = [
+  {
+    patterns: [/price|cost|much|activation|activate/i],
+    answer:
+      "Your first website is free. When you are ready to turn on the interactive version, activation is a one-time $100 — no subscription, no monthly fee, and hosting and maintenance are free while your site stays unchanged.",
+  },
+  {
+    patterns: [/triphone|archangel|phone/i],
+    answer:
+      'The Archangel 8 TriPhone is $750, from the Archangel 8 TriPhone DevLab Studio here at godworld.org.',
+  },
+  {
+    patterns: [/when|launch|available|start/i],
+    answer:
+      'The interactive version launches in January 2027. Pre-launch reservations are refundable until your site is delivered live and your own agent is connected.',
+  },
+  {
+    patterns: [/website|site|business|build/i],
+    answer:
+      'Super Intelligent Designs builds a free website for your business first. You look it over, and only if you want the interactive version do you activate it for a one-time $100.',
+  },
+];
+
+const FLOOR_DEFAULT =
+  "I'd rather connect you with Henry than give you the wrong answer. Ask me about a free website for your business, or about the Archangel 8 TriPhone.";
+
+function scriptedAnswer(text) {
+  for (const entry of FLOOR_ANSWERS) {
+    if (entry.patterns.some((p) => p.test(text))) return entry.answer;
+  }
+  return FLOOR_DEFAULT;
+}
+
+/* ---------------- Orchestrator ---------------- */
+
+class AvatarConnection {
+  constructor(env, options = {}) {
+    this.env = env;
+    this.tokenEndpoint = options.tokenEndpoint || '/api/live-token';
+    this.workerUrl = options.workerUrl || DEFAULT_WORKER_URL;
+    // Default is the connection Henry ordered: the Muse agent powers
+    // the avatar. 'live-first' survives only as an explicit legacy mode.
+    this.mode = options.mode || 'claude-first';
+    // Session gateway (see header): on by default for the pipeline
+    // transports; the legacy live-first mode keeps its own token path.
+    this.sessionGateway = options.sessionGateway !== false;
+    this.sessionMode = options.sessionMode || 'background';
+    // LIVENESS (go-live 2026-11-17): the EZ Peasy liveness client
+    // (js/liveness-client.js, adapters wired by the page). When
+    // present, the gateway handshake runs the liveness-at-touch
+    // check and a flow rider renews the attestation through the
+    // conversation. Absent = the pre-liveness handshake, unchanged.
+    this.livenessClient = options.livenessClient || null;
+    this.flowRider = null;
+    this.sessionToken = null;
+    this.cb = options.callbacks || {};
+    this.state = 'idle'; // idle | connecting | connected | dropped | blocked
+    this.transport = null; // claude | verified | scripted | live (legacy)
+    this.sessionId =
+      options.sessionId ||
+      'gw-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    this.record = [];
+    this.live = null;
+    this.verified = null;
+    this.claude = null;
+    this._liveDroppedOnce = false;
+    // Phone fallback state: fires once per session; the scripted
+    // floor may never speak the same answer twice in a row.
+    this._phoneFallbackFired = false;
+    this._lastScriptedAnswer = null;
+    this._phoneLineSpoken = false;
+    this._note('created', { mode: this.mode });
+  }
+
+  _note(event, detail = {}) {
+    const entry = { t: new Date().toISOString(), event, ...detail };
+    this.record.push(entry);
+    this.cb.onRecord && this.cb.onRecord(entry);
+    if (this.env.postSessionRecord) {
+      Promise.resolve(this.env.postSessionRecord({ sessionId: this.sessionId, ...entry })).catch(() => {});
+    }
+  }
+
+  _setState(state, transport) {
+    this.state = state;
+    if (transport !== undefined) this.transport = transport;
+    this.cb.onState && this.cb.onState(this.state, this.transport);
+  }
+
+  async connect() {
+    if (this.state === 'connecting' || this.state === 'connected') return;
+    if (this.live) {
+      // stale transport from a dropped/blocked attempt: close before reopening
+      try {
+        this.live.close();
+      } catch {}
+      this.live = null;
+    }
+    this._setState('connecting');
+    // Session gateway handshake first (pipeline modes only): nonce ->
+    // signed exchange -> short-lived session token bound to a
+    // server-minted sessionId + this connection's mode. On failure the
+    // connection continues tokenless (the pre-gateway anonymous path)
+    // and the failure is on the session record — never hidden.
+    if (this.sessionGateway && this.mode !== 'live-first' && !this.sessionToken) {
+      await this._startGatewaySession();
+    }
+    // Transport order by mode. The default ('claude-first') never routes
+    // the avatar's power through Gemini Live; 'live' appears only in the
+    // explicit legacy 'live-first' mode, and after a live drop the
+    // reconnect sticks to the Muse connection.
+    let order;
+    if (this._liveDroppedOnce) order = ['claude', 'verified'];
+    else if (this.mode === 'live-first') order = ['live', 'claude', 'verified'];
+    else if (this.mode === 'verified-first') order = ['verified', 'claude'];
+    else order = ['claude', 'verified']; // claude-first (default)
+    for (const which of order) {
+      try {
+        if (which === 'live') {
+          const outcome = await this._connectLive();
+          if (outcome === 'blocked') return; // mic blocked: status text guides the fix; a re-tap retries
+        } else if (which === 'claude') await this._connectClaude();
+        else await this._connectVerified();
+        this._note('connected', { transport: this.transport });
+        return;
+      } catch (e) {
+        this._note('transport-failed', { transport: which, error: String((e && e.message) || e) });
+      }
+    }
+    // Both network paths failed: the scripted floor still answers.
+    this._setState('connected', 'scripted');
+    this._note('connected', { transport: 'scripted' });
+    // No live path at all: Henry's rule — the visitor gets the
+    // phone fallback immediately, not a scripted-only conversation.
+    this._firePhoneFallback('no-live-path');
+    this.cb.onSpeakText && this.cb.onSpeakText(INTRO_LINE);
+  }
+
+  /** Run the gateway handshake; adopt the server-minted session. */
+  async _startGatewaySession() {
+    try {
+      const session = await startGatewaySession(this.env.fetch, this.workerUrl, this.sessionMode, this.livenessClient);
+      this.sessionToken = session.sessionToken;
+      this.sessionId = session.sessionId;
+      this.sessionMode = session.mode || this.sessionMode;
+      this._note('gateway-session', { mode: this.sessionMode, expiresAt: session.expiresAt || null });
+      // LIVENESS: with a claim on the session, arm the flow rider —
+      // renewal rides the conversation flow (no timer process).
+      this.flowRider = null;
+      if (this.livenessClient && session.liveness && session.liveness.passed) {
+        const atMs = Date.parse(session.liveness.at);
+        this.flowRider = this.livenessClient.createFlowRider({
+          sessionToken: session.sessionToken,
+          initialAttestedAt: Number.isFinite(atMs) ? atMs : Date.now(),
+        });
+        this._note('liveness-session', { level: session.liveness.level || null });
+      }
+      return true;
+    } catch (e) {
+      this.sessionToken = null;
+      this.flowRider = null;
+      this._note('gateway-failed', { error: String((e && e.message) || e) });
+      return false;
+    }
+  }
+
+  /** The node's chat gate flagged a turn recheckRequired (the claim
+   * went stale while the conversation was quiet, or the startup
+   * scan blocked live sessions): run a FULL re-check — flash plus a
+   * fresh generated cognitive prompt — and land it via the refresh
+   * mount. The flagged turn already got the graceful scripted
+   * fallback from the gate; the agent continues on the next turn.
+   * Never throws, never freezes. */
+  async _handleLivenessRecheck() {
+    this._note('liveness-recheck');
+    if (!this.flowRider) return;
+    try {
+      const ok = await this.flowRider.handleRecheck();
+      this._note(ok ? 'liveness-rechecked' : 'liveness-recheck-failed');
+    } catch (e) {
+      this._note('liveness-recheck-failed', { error: String((e && e.message) || e) });
+    }
+  }
+
+  async _connectLive() {
+    const live = new LiveTransport(this.env, {
+      onText: (text, who) => this.cb.onText && this.cb.onText(text, who),
+      onTurnComplete: () => this.cb.onTurnComplete && this.cb.onTurnComplete(),
+      onAudioChunk: () => {},
+      onInterrupted: () => this._note('interrupted'),
+      onMicUnavailable: (why) => {
+        this._note('mic-unavailable', { why });
+      },
+      onDrop: (why) => this._handleDrop('live', why),
+    });
+    const { micOk } = await live.connect(this.tokenEndpoint);
+    this.live = live;
+    if (!micOk) {
+      // The session is open but the visitor cannot be heard: say so
+      // honestly instead of pretending a conversation is running.
+      this._setState('blocked', 'live');
+      this._note('blocked', { transport: 'live', why: 'mic-unavailable' });
+      return 'blocked';
+    }
+    this._setState('connected', 'live');
+    live.sayLine(INTRO_LINE);
+    return 'connected';
+  }
+
+  async _connectClaude() {
+    this.claude = new ClaudeTransport(this.env, {
+      workerUrl: this.workerUrl,
+      sessionId: this.sessionId,
+      getSessionToken: () => this.sessionToken,
+      onSentence: (text) => this.cb.onSpeakText && this.cb.onSpeakText(text),
+      onLink: (linkObj) => this.cb.onLink && this.cb.onLink(linkObj),
+      onDone: () => this.cb.onTurnComplete && this.cb.onTurnComplete(),
+      onError: (e) => this._note('claude-error', { error: String((e && e.message) || e) }),
+      onLivenessRecheck: () => { this._handleLivenessRecheck(); },
+      onEscalation: () => {
+        this._note('escalation', { transport: 'claude' });
+        this._firePhoneFallback('escalation');
+      },
+    });
+    await this.claude.connect();
+    this._setState('connected', 'claude');
+    this.cb.onSpeakText && this.cb.onSpeakText(INTRO_LINE);
+    // The agent takes the visitor's turns via hear().
+  }
+
+  async _connectVerified() {
+    this.verified = new VerifiedTransport(this.env, {
+      workerUrl: this.workerUrl,
+      sessionId: this.sessionId,
+      getSessionToken: () => this.sessionToken,
+      onSentence: (text) => this.cb.onSpeakText && this.cb.onSpeakText(text),
+      onLink: (linkObj) => this.cb.onLink && this.cb.onLink(linkObj),
+      onDone: () => this.cb.onTurnComplete && this.cb.onTurnComplete(),
+      onError: (e) => this._note('verified-error', { error: String((e && e.message) || e) }),
+      onLivenessRecheck: () => { this._handleLivenessRecheck(); },
+    });
+    // Same escalation honesty as the Muse transport: when the
+    // pipeline's answer is its "get Henry" class, fire the phone
+    // fallback (once per session) while the sentence is spoken.
+    const pipelineOnSentence = this.verified.onSentence;
+    this.verified.onSentence = (text) => {
+      if (ESCALATION_PATTERN.test(text)) {
+        this._note('escalation', { transport: 'verified' });
+        this._firePhoneFallback('escalation');
+      }
+      pipelineOnSentence && pipelineOnSentence(text);
+    };
+    await this.verified.connect();
+    this._setState('connected', 'verified');
+    this.cb.onSpeakText && this.cb.onSpeakText(INTRO_LINE);
+    // The verified pipeline takes its first real message via hear().
+  }
+
+  /** Phone fallback: alert Henry once for this session (the
+   * server dedupes per session and expires alerts after 10
+   * minutes) and tell the page to present the tap-to-call card.
+   * Never throws; the conversation continues regardless. */
+  async _firePhoneFallback(reason) {
+    if (this._phoneFallbackFired) return;
+    this._phoneFallbackFired = true;
+    this._note('phone-fallback', { reason });
+    try {
+      await this.env.fetch(`${this.workerUrl}/api/call-start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: this.sessionId }),
+      });
+    } catch {}
+    this.cb.onPhoneFallback &&
+      this.cb.onPhoneFallback({ telUrl: HENRY_TEL_URL, phoneDisplay: HENRY_PHONE_DISPLAY, reason });
+  }
+
+  /** Speak a scripted-floor answer — with the anti-loop rule
+   * (Henry's order, 2026-11-17): the floor NEVER repeats the same
+   * answer twice in a row. A repeat instead escalates to the
+   * phone fallback and speaks the pointer line once; after that
+   * the avatar stays quiet rather than looping. The floor's
+   * default (escalation-class) answer fires the phone fallback
+   * the first time it is used. */
+  _speakScripted(text) {
+    const answer = scriptedAnswer(text);
+    if (answer === this._lastScriptedAnswer) {
+      this._firePhoneFallback('scripted-repeat');
+      if (!this._phoneLineSpoken) {
+        this._phoneLineSpoken = true;
+        this.cb.onSpeakText && this.cb.onSpeakText(PHONE_ESCALATION_LINE);
+      }
+      return;
+    }
+    this._lastScriptedAnswer = answer;
+    if (answer === FLOOR_DEFAULT) this._firePhoneFallback('scripted-floor');
+    this.cb.onSpeakText && this.cb.onSpeakText(answer);
+  }
+
+  /** A visitor utterance (speech-recognition text, or a test turn). */
+  async hear(text) {
+    if (!text || !text.trim()) return;
+    this._note('visitor-turn', { chars: text.length });
+    if (this.transport === 'live' && this.live) {
+      this.live.sendText(text);
+    } else if (
+      (this.transport === 'claude' && this.claude) ||
+      (this.transport === 'verified' && this.verified)
+    ) {
+      const pipe = this.transport === 'claude' ? this.claude : this.verified;
+      // LIVENESS flow rider: while the claim is comfortably fresh
+      // this returns {} and the turn goes out as-is; near-stale it
+      // runs a quiet flash check and the turn carries a renewal CAT
+      // the node's chat gate consumes.
+      let livenessCat = null;
+      if (this.flowRider) {
+        try {
+          const extra = await this.flowRider.prepareTurn();
+          if (extra && typeof extra.livenessCat === 'string') livenessCat = extra.livenessCat;
+        } catch {}
+      }
+      try {
+        await pipe.send(text, livenessCat);
+        if (livenessCat && this.flowRider) this.flowRider.noteAttested(Date.now());
+      } catch (e) {
+        // A 401 means the gateway session token expired or was
+        // rejected: re-handshake ONCE and retry the turn on the fresh
+        // session before giving up on the pipeline.
+        let recovered = false;
+        if (e && e.status === 401 && this.sessionGateway) {
+          this.sessionToken = null;
+          if (await this._startGatewaySession()) {
+            pipe.sessionId = this.sessionId;
+            try {
+              await pipe.send(text);
+              recovered = true;
+            } catch {}
+          }
+        }
+        if (!recovered) {
+          // Pipeline dropped mid-conversation: fall to the scripted floor.
+          this._setState('connected', 'scripted');
+          this._note('fell-to-scripted');
+          this._speakScripted(text);
+        }
+      }
+    } else {
+      this._speakScripted(text);
+    }
+  }
+
+  _handleDrop(which, why) {
+    if (this.state !== 'connected') return;
+    // hardening #7: note the drop in the session record, re-offer the trigger.
+    this._note('drop', { transport: which, why });
+    if (which === 'live') this._liveDroppedOnce = true;
+    this._setState('dropped');
+    this.cb.onDropped && this.cb.onDropped(which, why);
+  }
+
+  getPlaybackLevel() {
+    return this.live ? this.live.getPlaybackLevel() : 0;
+  }
+
+  getMicLevel() {
+    return this.live ? this.live.getMicLevel() : 0;
+  }
+
+  isSpeaking() {
+    return this.live ? this.live.isSpeaking() : false;
+  }
+
+  end() {
+    this._note('ended', { transport: this.transport });
+    if (this.live) this.live.close();
+    this.sessionToken = null; // a fresh tap runs a fresh gateway handshake
+    this.flowRider = null;
+    this._setState('idle', null);
+  }
+}
+
+const api = {
+  LIVE_MODEL,
+  LIVE_WS_URL,
+  DEFAULT_WORKER_URL,
+  INTRO_LINE,
+  LIVE_SYSTEM_INSTRUCTION,
+  PlaybackQueue,
+  LiveTransport,
+  VerifiedTransport,
+  ClaudeTransport,
+  AvatarConnection,
+  startGatewaySession,
+  scriptedAnswer,
+  HENRY_TEL_URL,
+  HENRY_PHONE_DISPLAY,
+  PHONE_ESCALATION_LINE,
+  FLOOR_DEFAULT,
+  floatToPcm16Base64,
+  pcm16Base64ToFloat32,
+  rmsLevel,
+  mouthOpenFromLevel,
+  createSyllableMouth,
+};
+
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+if (typeof window !== 'undefined') window.GodworldConnection = api;
