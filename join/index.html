@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Join the call — godworld.org</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: system-ui, sans-serif; background: #0b0f16; color: #fff;
+    min-height: 100dvh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px; padding: 24px;
+    text-align: center;
+  }
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: .02em; }
+  #status { font-size: 16px; line-height: 1.45; opacity: .92; max-width: 420px; }
+  #joinBtn, #leaveBtn {
+    font: 700 19px system-ui, sans-serif; padding: 16px 34px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.35); cursor: pointer;
+  }
+  #joinBtn { background: #e8c15a; color: #101828; }
+  #leaveBtn { background: rgba(255,255,255,.12); color: #fff; }
+  #promptBox { display: none; max-width: 420px; }
+  #promptQ { font-size: 17px; margin-bottom: 10px; }
+  #promptRow { display: flex; gap: 8px; justify-content: center; }
+  #promptInput {
+    font: 16px system-ui, sans-serif; padding: 10px 14px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.08); color: #fff;
+    width: min(56vw, 240px); outline: none;
+  }
+  #promptGo {
+    font: 600 15px system-ui, sans-serif; padding: 10px 18px; border-radius: 999px;
+    border: 0; background: #fff; color: #101828; cursor: pointer;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<h1>Join the call</h1>
+<div id="status">Tap below to verify it&rsquo;s you and join the visitor&rsquo;s call. You, the visitor, and the agent will all be on together.</div>
+<button id="joinBtn">Join the call</button>
+<div id="promptBox">
+  <div id="promptQ"></div>
+  <div id="promptRow">
+    <input id="promptInput" type="text" autocomplete="off" aria-label="Liveness answer">
+    <button id="promptGo">Answer</button>
+  </div>
+</div>
+<button id="leaveBtn" class="hidden">Leave the call</button>
+<audio id="remoteAudio" autoplay playsinline></audio>
+
+<script src="/js/liveness-client.js"></script>
+<script src="/js/connection.js"></script>
+<script>
+'use strict';
+/*
+  join/index.html — Leg B3 (2026-11-17, Henry's order): Henry joins a
+  live visitor call from his phone browser as a third peer.
+
+  Flow: this page runs the same gateway handshake as every godworld
+  page — nonce -> EZ Peasy liveness on THIS device -> exchange — but
+  with the HUMAN-marked session mode. The node binds mode 'human'
+  into the session; the join mounts accept nothing else. The page
+  then publishes Henry's mic to the Cloudflare Calls SFU as
+  'henry-audio' on his own SFU session, pulls the visitor's and the
+  agent's tracks, and the visitor's page pulls Henry's track in
+  return. Three-way call: visitor + agent + Henry.
+
+  The target is the visitor's gateway session id (?s=...), which
+  Henry gets from his call-start alert. Knowing that unguessable id
+  plus passing his own fresh liveness is the join capability.
+*/
+(function () {
+  const C = window.GodworldConnection;
+  const WORKER = C.DEFAULT_WORKER_URL;
+  const statusEl = document.getElementById('status');
+  const joinBtn = document.getElementById('joinBtn');
+  const leaveBtn = document.getElementById('leaveBtn');
+  const remoteAudio = document.getElementById('remoteAudio');
+  const params = new URLSearchParams(location.search);
+  const targetSessionId = params.get('s') || params.get('session') || '';
+
+  function setStatus(t) { statusEl.textContent = t; }
+
+  /* ---------- liveness adapters (same device adapters as the
+     storefront pages; the cognitive prompt is answered by typing
+     here — Henry's own utility page, words allowed) ---------- */
+  let flashEl = null;
+  function flashOverlay() {
+    if (!flashEl) {
+      flashEl = document.createElement('div');
+      flashEl.style.cssText = 'position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:60;transition:opacity 60ms linear;';
+      document.body.appendChild(flashEl);
+    }
+    return flashEl;
+  }
+  const screenAdapter = {
+    async setBrightness(level) { flashOverlay().style.opacity = String(Math.max(0, Math.min(1, level)) * 0.9); },
+    async setBrightnessQuiet(level) { flashOverlay().style.opacity = String(Math.max(0, Math.min(1, level)) * 0.4); },
+    async restore() { if (flashEl) flashEl.style.opacity = '0'; },
+  };
+  const cameraAdapter = {
+    stream: null, video: null, canvas: null,
+    async _ensure() {
+      if (this.stream) return true;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+      this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      this.video = document.createElement('video');
+      this.video.playsInline = true;
+      this.video.muted = true;
+      this.video.srcObject = this.stream;
+      await this.video.play();
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = 64; this.canvas.height = 64;
+      return true;
+    },
+    async sampleStepLuminance() {
+      let ok = false;
+      try { ok = await this._ensure(); } catch { ok = false; }
+      if (!ok || !this.video) return 0.5;
+      await new Promise((r) => setTimeout(r, 350));
+      try {
+        const ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(this.video, 0, 0, 64, 64);
+        const d = ctx.getImageData(16, 16, 32, 32).data;
+        let sum = 0, n = 0;
+        for (let i = 0; i < d.length; i += 4) { sum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255; n++; }
+        return n ? sum / n : 0;
+      } catch { return 0.5; }
+    },
+    sourceKind() { return 'device-camera'; },
+    stop() {
+      if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = null; this.video = null;
+    },
+  };
+  const apiAdapter = {
+    async post(path, body) {
+      const res = await fetch(WORKER + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...(body || {}), page: '/join/' }),
+      });
+      const data = await res.json().catch(() => null);
+      if (path === '/api/liveness-verify') cameraAdapter.stop();
+      return { status: res.status, body: data };
+    },
+  };
+  const promptBox = document.getElementById('promptBox');
+  const promptQ = document.getElementById('promptQ');
+  const promptInput = document.getElementById('promptInput');
+  const promptGo = document.getElementById('promptGo');
+  const promptAdapter = {
+    ask(question) {
+      return new Promise((resolve) => {
+        promptQ.textContent = question;
+        promptBox.style.display = 'block';
+        promptInput.value = '';
+        promptInput.focus();
+        const done = () => {
+          promptBox.style.display = 'none';
+          promptGo.removeEventListener('click', done);
+          promptInput.removeEventListener('keydown', onKey);
+          resolve(promptInput.value || '');
+        };
+        const onKey = (e) => { if (e.key === 'Enter') done(); };
+        promptGo.addEventListener('click', done);
+        promptInput.addEventListener('keydown', onKey);
+        setTimeout(() => { if (promptBox.style.display !== 'none') done(); }, 60000);
+      });
+    },
+  };
+  const livenessClient = window.GodworldLiveness.createLivenessClient({
+    api: apiAdapter, screen: screenAdapter, camera: cameraAdapter, prompt: promptAdapter,
+  });
+
+  async function postJson(path, body) {
+    const res = await fetch(WORKER + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    const data = await res.json().catch(() => null);
+    return { status: res.status, data };
+  }
+
+  let pc = null;
+  let micStream = null;
+
+  async function join() {
+    if (!targetSessionId) {
+      setStatus('This link is missing the call reference. Open it from your call alert.');
+      return;
+    }
+    joinBtn.classList.add('hidden');
+    setStatus('Verifying it\u2019s you \u2014 hold your phone up and answer the question.');
+    let session;
+    try {
+      session = await C.startGatewaySession(window.fetch.bind(window), WORKER, 'human', livenessClient);
+    } catch (e) {
+      setStatus('The verification could not start. Tap Join to try again.');
+      joinBtn.classList.remove('hidden');
+      return;
+    }
+    if (!session || !session.sessionToken) {
+      setStatus('Verification did not pass, so no session was opened. Tap Join to try again.');
+      joinBtn.classList.remove('hidden');
+      return;
+    }
+    setStatus('Verified. Opening the call\u2026');
+    try {
+      const auth = await postJson('/api/rtc/authorize', { sessionToken: session.sessionToken, sessionId: session.sessionId });
+      if (auth.status !== 200 || !auth.data || auth.data.authorized !== true) {
+        setStatus('The call could not be authorized for this session.');
+        joinBtn.classList.remove('hidden');
+        return;
+      }
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      pc = new RTCPeerConnection({ iceServers: auth.data.iceServers || [{ urls: 'stun:stun.cloudflare.com:3478' }] });
+      const remoteStream = new MediaStream();
+      remoteAudio.srcObject = remoteStream;
+      pc.ontrack = (e) => {
+        if (e.track && !remoteStream.getTracks().includes(e.track)) remoteStream.addTrack(e.track);
+        setStatus('You are on the call \u2014 you can talk now.');
+        leaveBtn.classList.remove('hidden');
+      };
+      for (const track of micStream.getAudioTracks()) pc.addTrack(track, micStream);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      const sig = await postJson('/api/rtc/join-offer', {
+        sessionToken: session.sessionToken,
+        sessionId: session.sessionId,
+        targetSessionId,
+        sdp: pc.localDescription.sdp,
+      });
+      if (!sig || sig.status !== 200 || !sig.data || !sig.data.answerSdp) {
+        setStatus(sig && sig.data && sig.data.error ? 'Join failed: ' + sig.data.error : 'That call is not open right now.');
+        joinBtn.classList.remove('hidden');
+        return;
+      }
+      await pc.setRemoteDescription({ type: 'answer', sdp: sig.data.answerSdp });
+      setStatus('Connected to the call \u2014 bringing in the visitor and the agent\u2026');
+      // Pull the visitor's track, then the agent's once it publishes:
+      // the node answers each pull with the SFU's offer; we answer and
+      // relay. agentPending says another pull is still worth making.
+      for (let i = 0; i < 20 && pc && pc.connectionState !== 'closed'; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        let pull;
+        try {
+          pull = await postJson('/api/rtc/join-pull', { sessionToken: session.sessionToken, sessionId: session.sessionId });
+        } catch { continue; }
+        if (!pull || pull.status !== 200 || !pull.data) continue;
+        if (!pull.data.offerSdp) {
+          if (pull.data.agentPending === false) break;
+          continue;
+        }
+        try {
+          await pc.setRemoteDescription({ type: 'offer', sdp: pull.data.offerSdp });
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await postJson('/api/rtc/join-renegotiate', {
+            sessionToken: session.sessionToken,
+            sessionId: session.sessionId,
+            sdp: pc.localDescription.sdp,
+          });
+          if (pull.data.agentPending === false) break;
+        } catch { break; }
+      }
+    } catch (e) {
+      setStatus('Something interrupted the join. Tap Join to try again.');
+      joinBtn.classList.remove('hidden');
+    }
+  }
+
+  joinBtn.addEventListener('click', join);
+  leaveBtn.addEventListener('click', () => {
+    if (pc) try { pc.close(); } catch {}
+    if (micStream) micStream.getTracks().forEach((t) => t.stop());
+    pc = null;
+    setStatus('You left the call.');
+    leaveBtn.classList.add('hidden');
+    joinBtn.classList.remove('hidden');
+  });
+})();
+</script>
+</body>
+</html>

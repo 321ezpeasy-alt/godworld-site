@@ -179,6 +179,10 @@ function createCallClient(options) {
       // endpoint has joined and published, the pull reports pending —
       // poll briefly, then let the agent track arrive via ontrack.
       const sfuSessionId = sig.data.sfuSessionId || null;
+      // Negotiation serializer: the agent pull and the Henry pull
+      // both answer SFU offers on this one PeerConnection; never let
+      // two answer sequences overlap.
+      let negotiating = false;
       (async () => {
         for (let i = 0; i < 15 && pc && pc.connectionState !== 'closed'; i++) {
           await new Promise((r) => setTimeout(r, 4000));
@@ -191,6 +195,8 @@ function createCallClient(options) {
             });
           } catch { continue; }
           if (!pull || pull.status !== 200 || !pull.data || !pull.data.offerSdp) continue;
+          if (negotiating) continue;
+          negotiating = true;
           try {
             await pc.setRemoteDescription({ type: 'offer', sdp: pull.data.offerSdp });
             const answer = await pc.createAnswer();
@@ -205,6 +211,46 @@ function createCallClient(options) {
           } catch (err) {
             onEvent({ type: 'agent-pull-failed', error: String(err && err.message ? err.message : err) });
             return;
+          } finally {
+            negotiating = false;
+          }
+        }
+      })();
+      // 4) HENRY JOIN (Leg B3, 2026-11-17): if Henry joins this call
+      // from his phone (human-marked session), his 'henry-audio'
+      // track becomes pullable on this session. Poll quietly for it
+      // (pending is the normal answer until he joins); on the SFU's
+      // offer, answer it exactly like the agent pull. Henry's voice
+      // then arrives through the same remote audio + analyser path.
+      (async () => {
+        for (let i = 0; i < 45 && pc && pc.connectionState !== 'closed'; i++) {
+          await new Promise((r) => setTimeout(r, 4000));
+          let pull;
+          try {
+            pull = await postJson('/api/rtc/pull-henry', {
+              sessionToken: session.sessionToken,
+              sessionId: session.sessionId,
+            });
+          } catch { continue; }
+          if (!pull || pull.status !== 200 || !pull.data || !pull.data.offerSdp) continue;
+          if (negotiating) continue;
+          negotiating = true;
+          try {
+            await pc.setRemoteDescription({ type: 'offer', sdp: pull.data.offerSdp });
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await postJson('/api/rtc/renegotiate', {
+              sessionToken: session.sessionToken,
+              sessionId: session.sessionId,
+              sdp: pc.localDescription.sdp,
+            });
+            onEvent({ type: 'henry-track-live' });
+            return;
+          } catch (err) {
+            onEvent({ type: 'henry-pull-failed', error: String(err && err.message ? err.message : err) });
+            return;
+          } finally {
+            negotiating = false;
           }
         }
       })();
