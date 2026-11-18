@@ -288,7 +288,14 @@
     doorCard.addEventListener('click', (e) => {
       e.stopPropagation();
       if (activeDoorUrl) {
-        window.open(activeDoorUrl, '_blank', 'noopener,noreferrer');
+        // A tel: card is the phone fallback: hand it to the
+        // device's dialer (the visitor's own phone rings Henry) —
+        // window.open cannot do that.
+        if (activeDoorUrl.startsWith('tel:')) {
+          window.location.href = activeDoorUrl;
+        } else {
+          window.open(activeDoorUrl, '_blank', 'noopener,noreferrer');
+        }
       }
     });
   }
@@ -396,6 +403,17 @@
         if (linkObj && linkObj.name && linkObj.url) {
           showDoorCard(linkObj.name, linkObj.url);
         }
+      },
+      onPhoneFallback(info) {
+        // Henry's phone fallback (2026-11-17): the live agent
+        // could not take this visitor, so the site offers the
+        // real ring — a tap-to-call card to Henry's TextNow
+        // number. The visitor's own phone dials it; Henry has
+        // also been alerted server-side (one alert per session).
+        const phone = (info && info.phoneDisplay) || '(314) 202-4304';
+        const tel = (info && info.telUrl) || 'tel:+13142024304';
+        setStatus('Live agent unavailable — tap Call Henry to ring him now');
+        showDoorCard('Call Henry — ' + phone, tel);
       },
       onDropped() {},
       onRecord() {},

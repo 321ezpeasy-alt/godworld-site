@@ -600,7 +600,21 @@ class VerifiedTransport {
  *     class of answer, that sentence is spoken as-is and the turn is
  *     noted as an escalation in the session record.
  */
-const ESCALATION_PATTERN = /rather connect you with Henry|get Henry|connect you with Henry/i;
+const ESCALATION_PATTERN =
+  /rather connect you with Henry|rather you talk to Henry|talk to Henry than give you|get Henry|connect you with Henry/i;
+
+/* ---------------- Phone fallback (Henry's design, 2026-11-17) ----------------
+ * When no live path can hold the conversation — the pipeline's
+ * answer IS its escalation line, or the local scripted floor is
+ * all that's left — the visitor is offered the real ring: a
+ * tap-to-call button to Henry's TextNow number (the visitor's own
+ * phone dials it and Henry's phone rings), and the server writes
+ * Henry's ONE alert record for the session via /api/call-start.
+ * Fires at most once per session (see AvatarConnection). */
+const HENRY_TEL_URL = 'tel:+13142024304';
+const HENRY_PHONE_DISPLAY = '(314) 202-4304';
+const PHONE_ESCALATION_LINE =
+  "I've let Henry know you need him. Tap the Call Henry button on this page and your phone will ring him directly — or he'll join from the alert I just sent.";
 
 class ClaudeTransport extends VerifiedTransport {
   constructor(env, opts) {
@@ -689,6 +703,11 @@ class AvatarConnection {
     this.verified = null;
     this.claude = null;
     this._liveDroppedOnce = false;
+    // Phone fallback state: fires once per session; the scripted
+    // floor may never speak the same answer twice in a row.
+    this._phoneFallbackFired = false;
+    this._lastScriptedAnswer = null;
+    this._phoneLineSpoken = false;
     this._note('created', { mode: this.mode });
   }
 
@@ -750,6 +769,9 @@ class AvatarConnection {
     // Both network paths failed: the scripted floor still answers.
     this._setState('connected', 'scripted');
     this._note('connected', { transport: 'scripted' });
+    // No live path at all: Henry's rule — the visitor gets the
+    // phone fallback immediately, not a scripted-only conversation.
+    this._firePhoneFallback('no-live-path');
     this.cb.onSpeakText && this.cb.onSpeakText(INTRO_LINE);
   }
 
@@ -834,7 +856,10 @@ class AvatarConnection {
       onDone: () => this.cb.onTurnComplete && this.cb.onTurnComplete(),
       onError: (e) => this._note('claude-error', { error: String((e && e.message) || e) }),
       onLivenessRecheck: () => { this._handleLivenessRecheck(); },
-      onEscalation: () => this._note('escalation', { transport: 'claude' }),
+      onEscalation: () => {
+        this._note('escalation', { transport: 'claude' });
+        this._firePhoneFallback('escalation');
+      },
     });
     await this.claude.connect();
     this._setState('connected', 'claude');
@@ -853,10 +878,62 @@ class AvatarConnection {
       onError: (e) => this._note('verified-error', { error: String((e && e.message) || e) }),
       onLivenessRecheck: () => { this._handleLivenessRecheck(); },
     });
+    // Same escalation honesty as the Muse transport: when the
+    // pipeline's answer is its "get Henry" class, fire the phone
+    // fallback (once per session) while the sentence is spoken.
+    const pipelineOnSentence = this.verified.onSentence;
+    this.verified.onSentence = (text) => {
+      if (ESCALATION_PATTERN.test(text)) {
+        this._note('escalation', { transport: 'verified' });
+        this._firePhoneFallback('escalation');
+      }
+      pipelineOnSentence && pipelineOnSentence(text);
+    };
     await this.verified.connect();
     this._setState('connected', 'verified');
     this.cb.onSpeakText && this.cb.onSpeakText(INTRO_LINE);
     // The verified pipeline takes its first real message via hear().
+  }
+
+  /** Phone fallback: alert Henry once for this session (the
+   * server dedupes per session and expires alerts after 10
+   * minutes) and tell the page to present the tap-to-call card.
+   * Never throws; the conversation continues regardless. */
+  async _firePhoneFallback(reason) {
+    if (this._phoneFallbackFired) return;
+    this._phoneFallbackFired = true;
+    this._note('phone-fallback', { reason });
+    try {
+      await this.env.fetch(`${this.workerUrl}/api/call-start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: this.sessionId }),
+      });
+    } catch {}
+    this.cb.onPhoneFallback &&
+      this.cb.onPhoneFallback({ telUrl: HENRY_TEL_URL, phoneDisplay: HENRY_PHONE_DISPLAY, reason });
+  }
+
+  /** Speak a scripted-floor answer — with the anti-loop rule
+   * (Henry's order, 2026-11-17): the floor NEVER repeats the same
+   * answer twice in a row. A repeat instead escalates to the
+   * phone fallback and speaks the pointer line once; after that
+   * the avatar stays quiet rather than looping. The floor's
+   * default (escalation-class) answer fires the phone fallback
+   * the first time it is used. */
+  _speakScripted(text) {
+    const answer = scriptedAnswer(text);
+    if (answer === this._lastScriptedAnswer) {
+      this._firePhoneFallback('scripted-repeat');
+      if (!this._phoneLineSpoken) {
+        this._phoneLineSpoken = true;
+        this.cb.onSpeakText && this.cb.onSpeakText(PHONE_ESCALATION_LINE);
+      }
+      return;
+    }
+    this._lastScriptedAnswer = answer;
+    if (answer === FLOOR_DEFAULT) this._firePhoneFallback('scripted-floor');
+    this.cb.onSpeakText && this.cb.onSpeakText(answer);
   }
 
   /** A visitor utterance (speech-recognition text, or a test turn). */
@@ -903,11 +980,11 @@ class AvatarConnection {
           // Pipeline dropped mid-conversation: fall to the scripted floor.
           this._setState('connected', 'scripted');
           this._note('fell-to-scripted');
-          this.cb.onSpeakText && this.cb.onSpeakText(scriptedAnswer(text));
+          this._speakScripted(text);
         }
       }
     } else {
-      this.cb.onSpeakText && this.cb.onSpeakText(scriptedAnswer(text));
+      this._speakScripted(text);
     }
   }
 
@@ -954,6 +1031,10 @@ const api = {
   AvatarConnection,
   startGatewaySession,
   scriptedAnswer,
+  HENRY_TEL_URL,
+  HENRY_PHONE_DISPLAY,
+  PHONE_ESCALATION_LINE,
+  FLOOR_DEFAULT,
   floatToPcm16Base64,
   pcm16Base64ToFloat32,
   rmsLevel,
