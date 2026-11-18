@@ -265,7 +265,14 @@
          * ============================================================ */
         window.GATEWAY_CONFIG = {
             ownerEmail: '321ezpeasy@gmail.com',
-            messengerUrl: 'https://m.me/100080648036187',
+            /* Messenger route: "Archangel Seveng" — the account connected
+             * to this Muse seat. VERIFIED 2026-11-17 ~21:25 CST via
+             * facebook-cli `me`: name "Archangel Seveng", fb_user_id
+             * 61593681734935. (100080648036187, used before, is Henry's
+             * MAIN account — not the route Henry ordered.) */
+            messengerAccount: 'Archangel Seveng',
+            messengerId: '61593681734935',
+            messengerUrl: 'https://m.me/61593681734935',
             gatewaySocket: 'wss://godworld-storefront.321ezpeasy.workers.dev/brain-connect',
             workerUrl: 'https://godworld-storefront.321ezpeasy.workers.dev',
             slug: 'home',
@@ -441,11 +448,11 @@ Truth AI Operations`;
         'use strict';
 
         /* ---------- CONFIG — the one place to change endpoints ----------
-         * messengerUrl: the ONLY m.me value verified in godworld.org's
-         * records (Henry's main account). Henry named an "Archangel 7G"
-         * account in the 2026-11-17 call, but no m.me ID for that account
-         * exists in our records, so none was invented. To re-route, Henry
-         * changes this ONE constant. */
+         * messengerUrl: https://m.me/61593681734935 — "Archangel Seveng",
+         * the Messenger account connected to this Muse seat, verified
+         * 2026-11-17 via facebook-cli `me` (fb_user_id 61593681734935).
+         * Henry's main account (…036187) is NOT the route. To re-route a
+         * future site, change this ONE constant to that owner's ID. */
         var CONFIG = window.GATEWAY_CONFIG;
         if (!CONFIG) throw new Error('GATEWAY_CONFIG missing - the initialization drop-in did not run');
 
