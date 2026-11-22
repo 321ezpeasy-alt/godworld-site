@@ -97,7 +97,20 @@
     position: fixed; left: 50%; bottom: 170px; transform: translateX(-50%); z-index: 3;
     font-family: Helvetica, Arial, sans-serif; font-size: 0.8rem; letter-spacing: 0.04em;
     color: rgba(238,243,241,0.9); text-shadow: 0 1px 8px rgba(0,0,0,0.8); white-space: nowrap;
+    display: flex; align-items: center; gap: 8px;
   }
+  #codeinput {
+    font-family: Helvetica, Arial, sans-serif; font-size: 0.8rem; letter-spacing: 0.06em;
+    color: #eef3f1; background: rgba(238,243,241,0.10); text-transform: uppercase;
+    border: 1px solid rgba(238,243,241,0.4); border-radius: 999px; padding: 5px 12px; outline: none; width: 185px;
+  }
+  #codeinput::placeholder { color: rgba(238,243,241,0.55); text-transform: none; }
+  #applycode {
+    font-family: Helvetica, Arial, sans-serif; font-size: 0.8rem; cursor: pointer;
+    color: #eef3f1; background: rgba(16, 42, 74, 0.88);
+    border: 1px solid rgba(140, 200, 255, 0.7); border-radius: 999px; padding: 5px 13px;
+  }
+  #codeapplied { color: #ffe9a8; }
   /* Podcast chat */
   #chat {
     position: fixed; left: 50%; bottom: 216px; transform: translateX(-50%); z-index: 4;
@@ -130,7 +143,7 @@
     #host-henry { left: 1vw; } #host-emily { right: 1vw; }
     #tag-henry { left: 1vw; } #tag-emily { right: 1vw; }
     #chat { bottom: 226px; }
-    #sellernote { white-space: normal; text-align: center; width: 92vw; }
+    #sellernote { white-space: normal; text-align: center; width: 92vw; flex-wrap: wrap; justify-content: center; }
   }
 </style>
 </head>
@@ -159,7 +172,7 @@
   </div>
 </div>
 
-<div id="sellernote">Have a seller code? Put it in the shipping information at checkout &mdash; a verified purchase earns the seller a $100 rebate.</div>
+<div id="sellernote"><span>Have a seller code? Enter it and it rides along to checkout &mdash; a verified purchase earns the seller a $100 rebate.</span><input id="codeinput" type="text" placeholder="Seller code" autocomplete="off" spellcheck="false"><button id="applycode" type="button">Apply code</button><span id="codeapplied"></span></div>
 <a id="buybtn" class="pill" href="https://buy.stripe.com/aFa14maEs7sa2lF6ysdUY07">Get the Archangel 8 TriPhone &mdash; $750</a>
 <a id="callbtn" class="pill" href="tel:+15735879842">Call the Store</a>
 
@@ -326,6 +339,41 @@
     });
   }
   if ('speechSynthesis' in window) speechSynthesis.getVoices();
+</script>
+<script>
+  // Seller code -> checkout (2026-11-22 wiring-gap fix). The $100
+  // customer appreciation rebate attaches ONLY when the checkout
+  // carries the seller's code as Stripe's client_reference_id — the
+  // webhook reads it from the checkout session. So the buy button's
+  // link is rebuilt with ?client_reference_id=<CODE> as soon as a
+  // code is known: typed into the seller-code box, or arriving in
+  // this page's own URL (?code= / ?seller_code= / ?ref=). With no
+  // code, the button keeps the plain link. (Replaces the old
+  // "put it in the shipping information" note — Stripe does not
+  // carry shipping text back to the webhook, so that path could
+  // never attach a rebate.)
+  (function () {
+    var BUY_BASE = 'https://buy.stripe.com/aFa14maEs7sa2lF6ysdUY07';
+    var buyBtn = document.getElementById('buybtn');
+    var input = document.getElementById('codeinput');
+    var applied = document.getElementById('codeapplied');
+    function applySellerCode(raw) {
+      var code = String(raw || '').trim().toUpperCase();
+      if (!code) { buyBtn.href = BUY_BASE; applied.textContent = ''; return false; }
+      if (!/^[A-Z0-9][A-Z0-9-]{2,38}[A-Z0-9]$/.test(code)) {
+        applied.textContent = 'That code doesn\u2019t look right \u2014 check it and try again.';
+        return false;
+      }
+      buyBtn.href = BUY_BASE + '?client_reference_id=' + encodeURIComponent(code);
+      applied.textContent = 'Code ' + code + ' is on your checkout.';
+      return true;
+    }
+    document.getElementById('applycode').addEventListener('click', function () { applySellerCode(input.value); });
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') applySellerCode(input.value); });
+    var params = new URLSearchParams(window.location.search);
+    var fromUrl = params.get('code') || params.get('seller_code') || params.get('ref');
+    if (fromUrl) { input.value = fromUrl; applySellerCode(fromUrl); }
+  })();
 </script>
 </body>
 </html>
