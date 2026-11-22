@@ -122,7 +122,7 @@
     <div class="status-line" id="statusLine"></div>
 
     <section class="profile">
-      <p><strong>Emily Webb — Online Receptionist &amp; Outreach Agent</strong> for Super Intelligent Designs at godworld.org. In the background, Emily calls and texts businesses whose free storefronts are already built and live in the portfolio, and she issues Archangel 8 TriPhone seller codes for the $100 PayPal rebate. Website builds are theTruth AI's desk at godworld.org.</p>
+      <p><strong>Emily Webb — Online Receptionist &amp; Outreach Agent</strong> for Super Intelligent Designs at godworld.org, and the front of Henry Kennemore's store here. In the background, Emily calls and texts businesses whose free storefronts are already built and live in the portfolio, and she issues Archangel 8 TriPhone seller codes for the $100 PayPal rebate. Website builds are theTruth AI's desk at godworld.org.</p>
     </section>
 
     <div id="conversation">
@@ -141,14 +141,12 @@
 // Same live-brain pattern as the other ON builds: the page calls the
 // Cloudflare Worker (the only door), which relays to the brain node;
 // the verified pipeline answers. No keys ever appear in a page.
-const CHAT_URL = 'https://godworld-storefront.321ezpeasy.workers.dev/api/chat';
+const CHAT_URL = 'https://godworld.org/api/chat';
 const GREETING = "Hi, I'm Emily Francis Webb, the outreach agent for godworld.org. Welcome — I'm glad you're here.";
 const BRAIN_DOWN_LINE = "Sorry — my connection isn't reachable just this second. Give me a moment and ask me again.";
 const SPIEL = [
-  "I'm the first person most business owners meet here at godworld.org. I help owners who don't have a website yet — or only have a Facebook page — get a real storefront of their own.",
-  "Your first website is free. When you're ready to turn on the full interactive version, activation is a one-time one hundred dollars — no subscription.",
-  "Straight with you: the avatar on our site today is programmed — it is not a live AI yet. The real live brain arrives later, with the January 2027 launch.",
-  "Tell me about your business — what you do, and the name exactly as you'd like it to appear — and I'll get your consultation started. Henry reviews every consultation personally."
+  "I'm the front desk of Henry's store here at godworld.org — the outreach and Archangel 8 code desk.",
+  "If you'd like your seller code for the TriPhone rebate, just ask me — it's made from the email linked to your PayPal, and the same email always makes the same code."
 ];
 
 // --- Buyer's / seller code issuance (in-conversation only) -----------------
