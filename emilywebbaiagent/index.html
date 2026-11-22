@@ -150,11 +150,28 @@ const SPIEL = [
 ];
 
 // --- Buyer's / seller code issuance (in-conversation only) -----------------
-// The original Archangel 8 seller-code generator, recovered verbatim from the
-// old TriPhone page (triphone.html; verified against the live page 2026-10-08):
-// the code is minted client-side from the visitor's PayPal-linked email —
-// deterministic, so the same email always makes the same code. No server
-// call, no new wiring; everything happens inside the conversation below.
+// REGISTERED issuance (2026-11-22 wiring-gap fix): the code a visitor gets
+// here is minted by the godworld-storefront Worker at
+// POST /api/seller-codes/public and RECORDED in the seller-code store with
+// the visitor's PayPal email BEFORE it is spoken — that record is what
+// makes a TriPhone sale carrying the code owe the $100 customer
+// appreciation rebate. The endpoint lives on the Cloudflare Worker, NOT
+// on the local brain node, so issuance works with the brain down and
+// with Agent M offline; the only dependency is the Worker itself.
+// The route is public by necessity (a web page can hold no secret):
+// identity = the PayPal email, issuance is idempotent by email (the
+// same email always returns the same code — the store's standing
+// promise, now kept server-side), and the Worker rate-limits it.
+// FALLBACK: if the Worker is genuinely unreachable, the original
+// deterministic generator below (SHA-256 of "archangel8:" + email,
+// A8-XXXXXX — recovered verbatim from the old TriPhone page, verified
+// against the live page 2026-10-08) still produces a code in-page so
+// the desk never turns a visitor away. A fallback code is NOT yet
+// registered: the miss is logged client-side (console + a localStorage
+// retry queue flushed on every page load) and registers automatically
+// once the Worker answers again.
+const PUBLIC_ISSUE_URL = 'https://godworld.org/api/seller-codes/public';
+const PENDING_CODES_KEY = 'a8-pending-code-registrations';
 const CODE_GLYPHS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function sellerCode(email) {
   const clean = String(email).trim().toLowerCase();
@@ -169,6 +186,43 @@ function sellerCode(email) {
   });
 }
 
+function registerSellerCode(email) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 6000);
+  return fetch(PUBLIC_ISSUE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paypal: email, contact: email, source: 'emily-store' }),
+    signal: ctl.signal
+  }).then((res) => (res.ok ? res.json() : null))
+    .then((data) => (data && typeof data.code === 'string' ? data.code : null))
+    .catch(() => null)
+    .finally(() => clearTimeout(timer));
+}
+
+function queuePendingRegistration(email) {
+  try {
+    const q = JSON.parse(localStorage.getItem(PENDING_CODES_KEY) || '[]');
+    if (!q.includes(email)) { q.push(email); localStorage.setItem(PENDING_CODES_KEY, JSON.stringify(q.slice(-20))); }
+  } catch (e) { /* storage unavailable — the console log below still stands */ }
+  console.warn('[seller-code] UNREGISTERED fallback code issued for ' + email + ' — registration queued for retry.');
+}
+
+function flushPendingRegistrations() {
+  let q = [];
+  try { q = JSON.parse(localStorage.getItem(PENDING_CODES_KEY) || '[]'); } catch (e) { return; }
+  q.forEach((email) => {
+    registerSellerCode(email).then((code) => {
+      if (!code) return;
+      try {
+        const rest = JSON.parse(localStorage.getItem(PENDING_CODES_KEY) || '[]').filter((x) => x !== email);
+        localStorage.setItem(PENDING_CODES_KEY, JSON.stringify(rest));
+      } catch (e) { /* ignore */ }
+      console.info('[seller-code] queued registration completed for ' + email + ' -> ' + code);
+    });
+  });
+}
+
 let codeEmailPending = false;
 const EMAIL_IN_TEXT = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 
@@ -179,11 +233,19 @@ function issueCode(rawEmail) {
     queueSpeech("That doesn't look like a complete email address — what's the email linked to your PayPal? Your Archangel 8 seller code is made from that email.", true);
     return;
   }
-  sellerCode(email).then((code) => {
+  const speakCode = (code) => {
     queueSpeech('Your seller code is ' + code + ' — keep it somewhere safe. This is your Archangel 8 seller code, for the Archangel 8 TriPhone.', true);
     queueSpeech("Here's how it works: give that code when an Archangel 8 TriPhone is purchased — your own purchase, or one you send our way. Once the purchase verifies, $100 comes back as a rebate to the PayPal on " + email + ". You can get your code before or after you buy — and yes, your own code works on your own first TriPhone purchase too.", true);
-  }).catch(() => {
-    queueSpeech("I couldn't make your code just this second — ask me again in a moment and I'll generate it right away.", true);
+  };
+  registerSellerCode(email).then((serverCode) => {
+    if (serverCode) { speakCode(serverCode); return; }
+    // Worker unreachable: fall back to the in-page deterministic code so
+    // the desk still answers, log the miss, and queue the registration
+    // for automatic retry (see the issuance note above).
+    queuePendingRegistration(email);
+    sellerCode(email).then(speakCode).catch(() => {
+      queueSpeech("I couldn't make your code just this second — ask me again in a moment and I'll generate it right away.", true);
+    });
   });
 }
 
@@ -409,6 +471,10 @@ async function enter() {
 }
 
 talkBtn.addEventListener('click', enter);
+
+// Retry any seller-code registrations that fell back while the Worker
+// was unreachable on an earlier visit (see the issuance note above).
+flushPendingRegistrations();
 
 function sendTyped() {
   const text = typeInput.value.trim();
