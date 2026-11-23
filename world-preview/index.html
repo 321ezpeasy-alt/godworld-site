@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Godworld.org — Living Planet &amp; Muse Tour Guide</title>
+    <!--
+        GODWORLD.ORG WORLD — THREE-WAY MERGE (built 2026-11-23 on Henry's order)
+        =======================================================================
+        FOUNDATION  = ChatGPT rebuild: single DOMAINS dataset, complete canvas/
+                      state lifecycle, geo-projection (real lat/lng drive pin
+                      placement; animation offsets are visual life only),
+                      gesture-gated SpeechRecognition, resize handling.
+        PRESENTATION = Meta planet skin: full-screen curved planet grid like
+                      ground under your feet, horizon + atmosphere, ambient
+                      life moving across the surface, business pins standing
+                      on the ground, ONE spoken-line overlay + status line.
+                      NO panels, NO cards, NO buttons.
+        BRAIN       = Gemini tour guide's wired router (askVerifiedBrain):
+                      local voice intents execute locally; every open-ended
+                      question goes to the real double-verified brain at
+                      https://godworld.org/api/chat (NDJSON sentence stream).
+        AVATAR      = a drawn gaze-tracking face on the planet. It is NOT
+                      Henry's likeness and is never presented as him.
+        COORDINATES = UNVERIFIED approximations carried from the ChatGPT
+                      rebuild. Our own master business file (2026-11-22) holds
+                      no coordinates and none of these four businesses, so no
+                      verified coordinates were available. Do not present the
+                      coordinates in DOMAINS as exact.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: #050811;
+            color: #f8fafc;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        #grid-canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden select-none" style="height:100vh;width:100vw;">
+
+    <!-- Full-Screen Living Planet & Gaze-Tracking Avatar Canvas -->
+    <div id="canvas-container" style="position:fixed;inset:0;z-index:0;">
+        <canvas id="grid-canvas"></canvas>
+    </div>
+
+    <!-- Minimal Ambient Presence & Spoken Line Overlay (ZERO BUTTONS) -->
+    <div style="position:relative;z-index:10;height:100%;width:100%;display:flex;flex-direction:column;justify-content:space-between;padding:24px;box-sizing:border-box;pointer-events:none;">
+        <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#94a3b8;">
+            <span class="mono" style="letter-spacing:0.2em;text-transform:uppercase;color:rgba(165,180,252,0.8);">GODWORLD.ORG</span>
+            <span id="gaze-coords" class="mono" style="color:rgba(52,211,153,0.8);">0.00, 0.00</span>
+        </div>
+
+        <div style="max-width:36rem;margin:0 auto;text-align:center;margin-bottom:16px;">
+            <p id="avatar-spoken-line" style="font-size:clamp(16px,2.4vw,21px);font-weight:500;color:#f1f5f9;line-height:1.55;text-shadow:0 2px 12px rgba(0,0,0,0.8);margin:0 0 8px 0;">
+                You are standing on the open living planet of Godworld.org—ground under your feet, real places sitting where they belong, and life moving around you. Talk to move between places on this world.
+            </p>
+            <p id="world-status-line" class="mono" style="font-size:11px;text-transform:uppercase;letter-spacing:0.2em;color:rgba(165,180,252,0.7);margin:0;">
+                GODWORLD.ORG • PLANET GROUND TRUTH • OPEN WORLD FIRST
+            </p>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ============================================================================
+         * ZERO-BUTTON GODWORLD.ORG WORLD (three-way merge)
+         * - Layer 1 (Entry): Standing on the open living planet first
+         * - Layer 2 (Places): Moving to real places & districts on that ground
+         * - Planet is ground truth—you never leave it; places are what you visit
+         * - Interaction: voice commands + gaze/pointer dwell on pins (~1.2s).
+         *   A tap anywhere is ONLY the browser's first-gesture mic/audio unlock.
+         * - Open-ended questions: real verified brain, https://godworld.org/api/chat
+         * ============================================================================
+         */
+
+        // --- 1. SINGLE SOURCE OF TRUTH: PLACES ON THE PLANET ---
+        // Businesses carry real street addresses + Google Maps links (Meta skin).
+        // Coordinates are UNVERIFIED approximations (ChatGPT rebuild) — see header.
+        // Network nodes (godworld.org / district / muse) are voice destinations in
+        // the world, not businesses; flagship/district/muse share the flagship
+        // area anchor. Only entries with pin:true stand on the ground as pins.
+        const DOMAINS = [
+            {
+                id: 'flagship',
+                kind: 'network',
+                name: 'Godworld.org Flagship',
+                domain: 'godworld.org',
+                site: 'godworld.org',
+                district: 'Planet Ground Truth',
+                category: 'World Home',
+                lat: 37.3066, lng: -89.5183,
+                pin: true,
+                color: '#818cf8',
+                avatarPreset: 'brand',
+                sector: 'PLANET GROUND TRUTH',
+                keywords: ['flagship'],
+                guidePitch: "You are standing on the open living planet of Godworld.org—ground under your feet, real places sitting where they belong, and life moving around you. Talk to move between places on this world."
+            },
+            {
+                id: 'georges',
+                kind: 'business',
+                name: "George's",
+                domain: 'georgesonbroadway.com',
+                site: 'georgesonbroadway.com',
+                district: 'Broadway District',
+                category: 'Gather & Dine',
+                address: '600 Broadway St, Cape Girardeau, MO 63701',
+                mapsUrl: 'https://www.google.com/maps/place//data=!4m2!3m1!19sChIJNyCkWACHd4gRzq3umQU452g',
+                lat: 37.3059, lng: -89.5181,
+                pin: true,
+                color: '#38bdf8',
+                avatarPreset: 'solar',
+                sector: 'BROADWAY DISTRICT',
+                keywords: ['george', "george's", 'georges'],
+                guidePitch: "You're now standing at George's on Broadway Street—a real place on the planet, not a page. The ground underneath stays the same."
+            },
+            {
+                id: 'el-kolibri',
+                kind: 'business',
+                name: 'El Kolibri Coffee & Curiosities',
+                domain: 'elkolibricoffee.com',
+                site: 'elkolibricoffee.com',
+                district: 'Broadway District',
+                category: 'Flavor & Craft',
+                address: '605 Broadway St Ste 203, Cape Girardeau, MO 63701',
+                mapsUrl: 'https://www.google.com/maps/place//data=!4m2!3m1!19sChIJr9BN7cGHd4gRG5IHdevspbw',
+                lat: 37.3074, lng: -89.5215,
+                pin: true,
+                color: '#f43f5e',
+                avatarPreset: 'emerald',
+                sector: 'BROADWAY DISTRICT',
+                keywords: ['kolibri', 'el kolibri', 'hummingbird'],
+                guidePitch: "Now you're by El Kolibri Coffee and Curiosities on Broadway—another distinct place you can visit while staying right on the planet."
+            },
+            {
+                id: 'annie-lauries',
+                kind: 'business',
+                name: "Annie Laurie's",
+                domain: 'annielauries.com',
+                site: 'annielauries.com',
+                district: 'Broadway District',
+                category: 'Warmth & Tradition',
+                address: '536 Broadway St, Cape Girardeau, MO 63701',
+                mapsUrl: 'https://www.google.com/maps/place//data=!4m2!3m1!19sChIJYTlSII6Hd4gRdsojutTJzzU',
+                lat: 37.3042, lng: -89.5162,
+                pin: true,
+                color: '#f59e0b',
+                avatarPreset: 'cyber',
+                sector: 'BROADWAY DISTRICT',
+                keywords: ['annie', "annie laurie's", 'annie lauries', 'laurie'],
+                guidePitch: "This brings you over to Annie Laurie's on Broadway Street—moving through places on the world while the ground truth never leaves."
+            },
+            {
+                id: 'board-and-brush',
+                kind: 'business',
+                name: 'Board & Brush Creative Studio',
+                domain: 'boardandbrush.com/capegirardeau',
+                site: 'boardandbrush.com/capegirardeau',
+                district: 'Main Street District',
+                category: 'Create & Make',
+                address: '20 Main St #101, Cape Girardeau, MO 63701',
+                mapsUrl: 'https://www.google.com/maps/place//data=!4m2!3m1!19sChIJB-kBXISHd4gRljhOVZUUrRY',
+                lat: 37.3089, lng: -89.5148,
+                pin: true,
+                color: '#10b981',
+                avatarPreset: 'brand',
+                sector: 'MAIN STREET DISTRICT',
+                keywords: ['board and brush', 'board & brush', 'board', 'brush'],
+                guidePitch: "You've moved to Board and Brush Creative Studio on Main Street—still standing on the living planet of Godworld.org."
+            },
+            {
+                id: 'district',
+                kind: 'network',
+                name: 'Local Live District',
+                domain: 'district.godworld.org',
+                site: 'district.godworld.org',
+                district: 'Broadway & Main',
+                category: 'Geo-Anchored Storefronts',
+                lat: 37.3066, lng: -89.5183,
+                pin: false,
+                color: '#a78bfa',
+                avatarPreset: 'solar',
+                sector: 'BROADWAY & MAIN',
+                keywords: ['district', 'local live'],
+                guidePitch: "Talking moves you across places on the planet—like George's and El Kolibri Coffee—so each spot feels like somewhere to stand, not a page."
+            },
+            {
+                id: 'muse-studio',
+                kind: 'network',
+                name: 'Muse Avatar Engine',
+                domain: 'muse.godworld.org',
+                site: 'muse.godworld.org',
+                district: 'Creator Lab',
+                category: 'Vocal Avatar Customization',
+                lat: 37.3066, lng: -89.5183,
+                pin: false,
+                color: '#22d3ee',
+                avatarPreset: 'cyber',
+                sector: 'MUSE VOICE',
+                keywords: ['muse', 'crash course'],
+                guidePitch: "I am here so you can stand on the planet and move between places—ask for gold, cyan, or our brand, and we keep moving across the same ground."
+            }
+        ];
+
+        // --- MUSE AVATAR PRESETS (drawn face colors/shapes; voice-commanded) ---
+        const MUSE_PRESETS = {
+            brand:   { primaryColor: '#6366f1', secondaryColor: '#a855f7', eyeColor: '#38bdf8', shape: 'hexagon', scale: 1.05 },
+            cyber:   { primaryColor: '#06b6d4', secondaryColor: '#0284c7', eyeColor: '#f43f5e', shape: 'diamond', scale: 1.08 },
+            solar:   { primaryColor: '#f59e0b', secondaryColor: '#ea580c', eyeColor: '#ffffff', shape: 'octagon', scale: 1.06 },
+            emerald: { primaryColor: '#10b981', secondaryColor: '#059669', eyeColor: '#a7f3d0', shape: 'circle',  scale: 1.05 }
+        };
+
+        // --- 2. CANVAS, STATE & SEMANTIC TOKENS (complete lifecycle) ---
+        let canvas = null;
+        let ctx = null;
+        let width = 0;
+        let height = 0;
+
+        const semanticWords = (() => {
+            const base = ['GODWORLD', 'ATLAS', 'VOICE', 'MUSE', 'LIVE', 'LOCAL', 'SYNC', 'TRUST', 'GRID', 'PULSE', 'BRAND', 'PLANET'];
+            const words = base.map((text, i) => ({ text, x: (i * 0.173) % 1, y: 0.16 + (i % 5) * 0.15, speed: 0.6 + (i % 3) * 0.25 }));
+            DOMAINS.forEach((d, i) => {
+                words.push({ text: d.name.split(' ')[0].toUpperCase(), x: (0.11 + i * 0.19) % 1, y: 0.22 + (i % 4) * 0.16, speed: 0.5 + (i % 3) * 0.3 });
+            });
+            return words;
+        })();
+
+        const state = {
+            currentDomainId: 'flagship',
+            currentMusePreset: 'brand',
+            activePinId: null,
+            isTourActive: false,
+            tourStepIndex: 0,
+            tourTimer: null,
+            mouseNorm: { x: 0, y: 0 },
+            pointerPx: { x: -9999, y: -9999 },
+            targetLook: { x: 0, y: 0 },
+            gridPulse: 0,
+            isSpeaking: false,
+            recognition: null,
+            shouldListen: false,
+            hasInteracted: false,
+            projectedPins: [], // { domain, x, y(head), groundY, radius }
+            dwell: { id: null, since: 0, consumed: false }
+        };
+        const DWELL_MS = 1200;
+
+        // Ambient life moving across the open planet around the person
+        const ambientLife = [
+            { x: 0.14, y: 0.56, vx: 0.032, phase: 0.2, hue: '#38bdf8' },
+            { x: 0.84, y: 0.62, vx: -0.028, phase: 1.7, hue: '#a78bfa' },
+            { x: 0.36, y: 0.78, vx: 0.024, phase: 3.1, hue: '#34d399' },
+            { x: 0.68, y: 0.72, vx: -0.022, phase: 4.5, hue: '#fbbf24' }
+        ];
+
+        // --- 3. SPOKEN LINE & STATUS (the only two text surfaces) ---
+        function setSpokenLine(text) {
+            const el = document.getElementById('avatar-spoken-line');
+            if (el) el.textContent = text;
+        }
+
+        function setStatusLine(text) {
+            const el = document.getElementById('world-status-line');
+            if (el) el.textContent = text;
+        }
+
+        function speakText(text) {
+            if (!text || !('speechSynthesis' in window)) return;
+            try {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = 1.04;
+                utterance.pitch = 1.0;
+                utterance.onstart = () => { state.isSpeaking = true; };
+                utterance.onend = () => { state.isSpeaking = false; };
+                utterance.onerror = () => { state.isSpeaking = false; };
+                window.speechSynthesis.speak(utterance);
+            } catch (e) {
+                state.isSpeaking = false;
+            }
+        }
+
+        function sayLine(text) {
+            setSpokenLine(text);
+            speakText(text);
+        }
+
+        // --- 4. GEO-PROJECTION: REAL LAT/LNG DRIVE PLACEMENT ---
+        // Bounds come from the actual DOMAINS coordinates (ChatGPT foundation).
+        // Longitude -> ground x, latitude -> ground depth on the perspective
+        // planet surface. Animation never moves a pin's geographic position;
+        // it only pulses rings/glow (offsets are visual life, never geography).
+        let horizonY = 0;
+
+        function computePinPositions() {
+            const pinned = DOMAINS.filter(d => d.pin);
+            const lats = DOMAINS.map(d => d.lat);
+            const lngs = DOMAINS.map(d => d.lng);
+            const minLat = Math.min(...lats) - 0.0012;
+            const maxLat = Math.max(...lats) + 0.0012;
+            const minLng = Math.min(...lngs) - 0.0016;
+            const maxLng = Math.max(...lngs) + 0.0016;
+
+            const padX = Math.max(56, width * 0.10);
+            state.projectedPins = pinned.map(domain => {
+                const normX = (domain.lng - minLng) / Math.max(0.0001, maxLng - minLng);
+                const normY = 1 - (domain.lat - minLat) / Math.max(0.0001, maxLat - minLat);
+                const x = padX + normX * Math.max(80, width - padX * 2);
+                const groundY = horizonY + Math.pow(Math.max(0.06, Math.min(0.97, normY)), 1.55) * (height - horizonY - 46);
+                return { domain, x, groundY, y: groundY - 16, radius: 24 };
+            });
+        }
+
+        function hitTestPin(clientX, clientY) {
+            return state.projectedPins.find(pin => {
+                const dx = clientX - pin.x;
+                const dy = clientY - pin.y;
+                return Math.hypot(dx, dy) <= pin.radius + 14;
+            }) || null;
+        }
+
+        // --- 5. CANVAS INIT, GAZE & DWELL ---
+        function initGrid() {
+            canvas = document.getElementById('grid-canvas');
+            ctx = canvas.getContext('2d', { alpha: false });
+
+            const resizeCanvas = () => {
+                const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+                width = window.innerWidth;
+                height = window.innerHeight;
+                canvas.width = width * dpr;
+                canvas.height = height * dpr;
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            };
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            const updateGaze = (clientX, clientY) => {
+                const nx = (clientX / Math.max(width, 1)) * 2 - 1;
+                const ny = -(clientY / Math.max(height, 1)) * 2 + 1;
+                state.mouseNorm.x = nx;
+                state.mouseNorm.y = ny;
+                state.pointerPx.x = clientX;
+                state.pointerPx.y = clientY;
+                const gazeEl = document.getElementById('gaze-coords');
+                if (gazeEl) gazeEl.textContent = `${nx.toFixed(2)}, ${ny.toFixed(2)}`;
+            };
+
+            window.addEventListener('mousemove', (e) => updateGaze(e.clientX, e.clientY), { passive: true });
+            window.addEventListener('pointermove', (e) => updateGaze(e.clientX, e.clientY), { passive: true });
+            window.addEventListener('touchstart', (e) => {
+                if (e.touches.length > 0) updateGaze(e.touches[0].clientX, e.touches[0].clientY);
+            }, { passive: true });
+            window.addEventListener('touchmove', (e) => {
+                if (e.touches.length > 0) updateGaze(e.touches[0].clientX, e.touches[0].clientY);
+            }, { passive: true });
+
+            // A tap anywhere is ONLY the first-gesture mic/audio unlock.
+            window.addEventListener('pointerdown', unlockOnFirstGesture);
+            window.addEventListener('keydown', unlockOnFirstGesture);
+        }
+
+        function updateDwell(now) {
+            const hit = hitTestPin(state.pointerPx.x, state.pointerPx.y);
+            if (!hit) {
+                state.dwell.id = null;
+                state.dwell.consumed = false;
+                return;
+            }
+            if (state.dwell.id !== hit.domain.id) {
+                state.dwell.id = hit.domain.id;
+                state.dwell.since = now;
+                state.dwell.consumed = false;
+                return;
+            }
+            if (!state.dwell.consumed && now - state.dwell.since >= DWELL_MS) {
+                state.dwell.consumed = true;
+                stopAutoTour();
+                selectPlace(hit.domain.id, 'dwell');
+            }
+        }
+
+        function drawPolygon(cx, cy, radius, sides, rotation) {
+            ctx.beginPath();
+            for (let i = 0; i < sides; i++) {
+                const angle = rotation + (i * 2 * Math.PI) / sides;
+                const px = cx + radius * Math.cos(angle);
+                const py = cy + radius * Math.sin(angle);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+        }
+
+        // --- 6. LIVING PLANET RENDERER (Meta skin presentation) ---
+        function animateGrid(time) {
+            requestAnimationFrame(animateGrid);
+            const t = time * 0.001;
+            const now = time;
+
+            ctx.fillStyle = '#050811';
+            ctx.fillRect(0, 0, width, height);
+
+            // Drifting planetary curvature & horizon shift to convey planet movement
+            const planetDriftX = Math.sin(t * 0.14) * (width * 0.06);
+            const planetRadius = Math.max(width, height) * 1.15;
+            const planetCenterX = width * 0.5 + planetDriftX;
+            const planetCenterY = height * 0.58 + planetRadius + Math.cos(t * 0.18) * 10;
+            horizonY = planetCenterY - planetRadius;
+
+            // Pins are placed from real geography against this frame's horizon
+            computePinPositions();
+            updateDwell(now);
+
+            // Subtle planetary atmosphere arc along the horizon
+            const limbGrad = ctx.createRadialGradient(
+                planetCenterX, planetCenterY, planetRadius - 24,
+                planetCenterX, planetCenterY, planetRadius + 6
+            );
+            limbGrad.addColorStop(0, 'rgba(5, 8, 17, 0)');
+            limbGrad.addColorStop(0.75, 'rgba(99, 102, 241, 0.16)');
+            limbGrad.addColorStop(1, 'rgba(56, 189, 248, 0.03)');
+            ctx.fillStyle = limbGrad;
+            ctx.beginPath();
+            ctx.arc(planetCenterX, planetCenterY, planetRadius + 6, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Perspective floor grid moving across the planetary surface
+            ctx.strokeStyle = 'rgba(99, 102, 241, 0.22)';
+            ctx.lineWidth = 1;
+
+            const latShift = (t * 0.12) % 1;
+            const numRays = 14;
+            for (let i = -numRays; i <= numRays; i++) {
+                const shiftedI = i + latShift;
+                const spreadTop = shiftedI * (width / 18);
+                const spreadBottom = shiftedI * (width / 4.2);
+                ctx.beginPath();
+                ctx.moveTo(planetCenterX + spreadTop, horizonY);
+                ctx.lineTo(planetCenterX + spreadBottom, height);
+                ctx.stroke();
+            }
+
+            const scrollOffset = (t * 0.45 + state.gridPulse * 0.15) % 1;
+            if (state.gridPulse > 0) state.gridPulse *= 0.92;
+
+            for (let j = 0; j < 10; j++) {
+                const progress = (j + scrollOffset) / 10;
+                const y = horizonY + Math.pow(progress, 1.8) * (height - horizonY);
+                const curveArch = Math.sin(progress * Math.PI) * 14;
+                ctx.strokeStyle = `rgba(99, 102, 241, ${0.08 + progress * 0.28})`;
+                ctx.beginPath();
+                ctx.moveTo(0, y + curveArch * 0.35);
+                ctx.quadraticCurveTo(planetCenterX, y - curveArch, width, y + curveArch * 0.35);
+                ctx.stroke();
+            }
+
+            // Ambient grid words drifting with the planet's rotation
+            ctx.font = '600 11px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            semanticWords.forEach((w, idx) => {
+                const driftWrap = (((w.x + t * 0.022 * w.speed) % 1.24) + 1.24) % 1.24 - 0.12;
+                const wx = driftWrap * width;
+                const wy = w.y * height + Math.sin(t * w.speed + idx) * 8;
+                ctx.fillStyle = 'rgba(165, 180, 252, 0.34)';
+                ctx.fillText(w.text, wx, wy);
+            });
+
+            // Living movement across the planet ground around you
+            ambientLife.forEach((trav) => {
+                const spanX = (((trav.x + t * trav.vx) % 1.16) + 1.16) % 1.16 - 0.08;
+                const depth = Math.max(0.24, Math.min(0.94, trav.y + Math.sin(t * 0.9 + trav.phase) * 0.035));
+                const lx = spanX * width;
+                const ly = horizonY + Math.pow(depth, 1.55) * (height - horizonY - 24);
+                const stride = Math.sin(t * 7 + trav.phase) * 2.5;
+
+                ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+                ctx.beginPath();
+                ctx.ellipse(lx, ly + 2, 7, 2.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = trav.hue;
+                ctx.globalAlpha = 0.72;
+                ctx.beginPath();
+                ctx.arc(lx, ly - 9 + Math.abs(stride) * 0.4, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(lx, ly - 6);
+                ctx.lineTo(lx - stride, ly);
+                ctx.moveTo(lx, ly - 6);
+                ctx.lineTo(lx + stride, ly);
+                ctx.strokeStyle = trav.hue;
+                ctx.lineWidth = 1.4;
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+            });
+
+            // Geo-anchored pins standing on the ground (positions from lat/lng)
+            state.projectedPins.forEach((pin, i) => {
+                const px = pin.x;
+                const py = pin.groundY;
+                const headY = pin.y;
+                const isSelected = state.activePinId === pin.domain.id || state.currentDomainId === pin.domain.id;
+                const pulseR = (isSelected ? 10 : 6) + Math.sin(t * 3 + i) * 2;
+
+                // Pin stem & beacon on the grid
+                ctx.strokeStyle = isSelected ? '#34d399' : 'rgba(56, 189, 248, 0.55)';
+                ctx.lineWidth = isSelected ? 2 : 1.2;
+                ctx.beginPath();
+                ctx.moveTo(px, py);
+                ctx.lineTo(px, headY);
+                ctx.stroke();
+
+                // Pinpoint head
+                ctx.fillStyle = isSelected ? '#10b981' : pin.domain.color;
+                ctx.beginPath();
+                ctx.arc(px, headY, isSelected ? 6.5 : 4.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = isSelected ? 'rgba(52, 211, 153, 0.45)' : 'rgba(244, 63, 94, 0.25)';
+                ctx.beginPath();
+                ctx.arc(px, headY, pulseR, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Dwell progress ring (gaze/press-and-hold selection, ~1.2s)
+                if (state.dwell.id === pin.domain.id && !state.dwell.consumed) {
+                    const frac = Math.min(1, (now - state.dwell.since) / DWELL_MS);
+                    ctx.strokeStyle = 'rgba(52, 211, 153, 0.9)';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.arc(px, headY, 13, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+                    ctx.stroke();
+                }
+
+                // Pin label & district/website tag on the planet
+                ctx.font = '600 10px "JetBrains Mono", monospace';
+                ctx.fillStyle = isSelected ? '#a7f3d0' : 'rgba(226, 232, 240, 0.72)';
+                ctx.fillText(pin.domain.name.toUpperCase(), px, py + 12);
+                ctx.font = '400 9px "JetBrains Mono", monospace';
+                ctx.fillStyle = isSelected ? '#6ee7b7' : 'rgba(148, 163, 184, 0.65)';
+                ctx.fillText(`${pin.domain.district.toUpperCase()} • ${pin.domain.site}`, px, py + 24);
+            });
+
+            // --- THE AVATAR THAT LOOKS AT YOU (drawn face — not Henry's likeness) ---
+            state.targetLook.x += (state.mouseNorm.x - state.targetLook.x) * 0.12;
+            state.targetLook.y += (state.mouseNorm.y - state.targetLook.y) * 0.12;
+
+            const preset = MUSE_PRESETS[state.currentMusePreset] || MUSE_PRESETS.brand;
+            const avatarX = width * 0.5;
+            const talkBob = state.isSpeaking ? Math.sin(t * 14) * 4 : Math.sin(t * 2) * 5;
+            const avatarY = height * 0.42 + talkBob;
+            const baseR = (width < 640 ? 44 : 58) * preset.scale;
+
+            // Halo Ring
+            ctx.save();
+            ctx.translate(avatarX, avatarY);
+            ctx.rotate(t * 0.45);
+            ctx.strokeStyle = preset.eyeColor;
+            ctx.globalAlpha = 0.45;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, baseR * 1.48, baseR * 0.52, 0.3, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+
+            // Avatar Head
+            const hx = avatarX + state.targetLook.x * 12;
+            const hy = avatarY - state.targetLook.y * 10;
+
+            const grad = ctx.createRadialGradient(hx - baseR * 0.3, hy - baseR * 0.3, 5, hx, hy, baseR);
+            grad.addColorStop(0, preset.secondaryColor);
+            grad.addColorStop(1, preset.primaryColor);
+
+            ctx.fillStyle = grad;
+            ctx.strokeStyle = preset.eyeColor;
+            ctx.lineWidth = 2;
+
+            if (preset.shape === 'diamond') {
+                drawPolygon(hx, hy, baseR, 4, Math.PI / 4);
+            } else if (preset.shape === 'octagon') {
+                drawPolygon(hx, hy, baseR, 8, Math.PI / 8);
+            } else if (preset.shape === 'circle') {
+                ctx.beginPath();
+                ctx.arc(hx, hy, baseR * 0.92, 0, Math.PI * 2);
+            } else {
+                drawPolygon(hx, hy, baseR, 6, 0);
+            }
+            ctx.fill();
+            ctx.stroke();
+
+            // Eyes tracking the person
+            const eyeSpacing = baseR * 0.36;
+            const eyeY = hy - baseR * 0.08;
+            const eyeR = baseR * 0.22;
+            const pupilShiftX = state.targetLook.x * (eyeR * 0.48);
+            const pupilShiftY = -state.targetLook.y * (eyeR * 0.48);
+
+            [-eyeSpacing, eyeSpacing].forEach(dx => {
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(hx + dx, eyeY, eyeR, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#0f172a';
+                ctx.beginPath();
+                ctx.arc(hx + dx + pupilShiftX, eyeY + pupilShiftY, eyeR * 0.52, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = preset.eyeColor;
+                ctx.beginPath();
+                ctx.arc(hx + dx + pupilShiftX - 1.5, eyeY + pupilShiftY - 1.5, eyeR * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        // --- 7. MUSE PRESETS & PLACE SELECTION (voice/dwell only — no buttons) ---
+        function applyMusePreset(presetKey, spokenNote = '') {
+            if (!MUSE_PRESETS[presetKey]) return;
+            state.currentMusePreset = presetKey;
+            state.gridPulse = 4.0;
+            if (spokenNote) sayLine(spokenNote);
+        }
+
+        function selectPlace(domainId, source = 'voice') {
+            const target = DOMAINS.find(d => d.id === domainId) || DOMAINS[0];
+            state.currentDomainId = target.id;
+            state.activePinId = target.pin ? target.id : null;
+            state.gridPulse = 6.5;
+            state.currentMusePreset = target.avatarPreset;
+            setStatusLine(`GODWORLD.ORG • ${target.sector} • ${target.site.toUpperCase()}`);
+            sayLine(target.guidePitch);
+        }
+
+        function stopAutoTour() {
+            if (!state.isTourActive) return;
+            state.isTourActive = false;
+            clearInterval(state.tourTimer);
+            state.tourTimer = null;
+        }
+
+        const TOUR_ORDER = ['flagship', 'georges', 'el-kolibri', 'annie-lauries', 'board-and-brush', 'district', 'muse-studio'];
+
+        function startAutoTour() {
+            stopAutoTour();
+            state.isTourActive = true;
+            state.tourStepIndex = 0;
+
+            const step = () => {
+                if (!state.isTourActive) return;
+                const id = TOUR_ORDER[state.tourStepIndex % TOUR_ORDER.length];
+                selectPlace(id, 'tour');
+                state.tourStepIndex++;
+            };
+
+            sayLine('I will show you around Godworld.org right now.');
+            step();
+            state.tourTimer = setInterval(step, 9000);
+        }
+
+        // --- 8. REAL VERIFIED BRAIN (https://godworld.org/api/chat) ---
+        // Transplanted from the wired Gemini tour guide (askVerifiedBrain):
+        // open-ended questions go to the live double-verified brain — a draft
+        // checked by an independent verify pass, verdicts logged server-side.
+        // The stream is NDJSON: a {"type":"meta",...} line (carrying the
+        // sessionId to adopt), then {"type":"sentence",...} lines. Sentences
+        // stream into the spoken-line overlay; the joined answer is spoken
+        // once via speechSynthesis. Fail-closed: on HTTP error, timeout
+        // (>20s), or zero sentences, exactly ONE honest line is shown and
+        // spoken — no canned answer is ever invented.
+        const BRAIN_CHAT_URL = 'https://godworld.org/api/chat';
+        let brainSessionId = 'sess_' + Math.random().toString(36).slice(2, 10);
+
+        function setBrainStatus(mode) {
+            if (mode === 'asking') {
+                setStatusLine('ASKING VERIFIED BRAIN…');
+            } else if (mode === 'verified') {
+                setStatusLine('ANSWER VERIFIED ✓');
+                setTimeout(() => {
+                    const current = DOMAINS.find(d => d.id === state.currentDomainId) || DOMAINS[0];
+                    setStatusLine(`GODWORLD.ORG • ${current.sector} • ${current.site.toUpperCase()}`);
+                }, 2600);
+            } else if (mode === 'failed') {
+                setStatusLine("BRAIN DIDN'T ANSWER");
+            }
+        }
+
+        function brainFail() {
+            setBrainStatus('failed');
+            sayLine("The verified brain didn't answer just now — give it a moment and ask me again.");
+        }
+
+        async function askVerifiedBrain(question) {
+            stopAutoTour();
+            setBrainStatus('asking');
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 20000);
+            const sentences = [];
+            try {
+                const res = await fetch(BRAIN_CHAT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: question, sessionId: brainSessionId }),
+                    signal: controller.signal
+                });
+                if (!res.ok || !res.body) throw new Error('brain http ' + res.status);
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                const handleLine = (line) => {
+                    const t = line.trim();
+                    if (!t) return;
+                    let obj;
+                    try { obj = JSON.parse(t); } catch (e) { return; }
+                    if (obj.type === 'meta' && obj.sessionId) {
+                        brainSessionId = obj.sessionId;
+                    } else if (obj.type === 'sentence' && obj.text) {
+                        if (sentences.length === 0) setBrainStatus('verified');
+                        sentences.push(obj.text);
+                        setSpokenLine(sentences.join(' '));
+                    }
+                };
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    let idx;
+                    while ((idx = buffer.indexOf('\n')) >= 0) {
+                        handleLine(buffer.slice(0, idx));
+                        buffer = buffer.slice(idx + 1);
+                    }
+                }
+                if (buffer.trim()) handleLine(buffer);
+            } catch (err) {
+                clearTimeout(timer);
+                brainFail();
+                return;
+            }
+            clearTimeout(timer);
+            if (sentences.length === 0) {
+                brainFail();
+                return;
+            }
+            speakText(sentences.join(' '));
+        }
+
+        // --- 9. VOICE ROUTER: LOCAL INTENTS LOCAL, EVERYTHING ELSE TO THE BRAIN ---
+        // Bare "godworld" is NOT a local trigger — a question mentioning
+        // godworld.org goes to the brain and gets a real answer. Going home
+        // takes a clear command ("take me home", "flagship", "back to
+        // godworld home", "go home").
+        function handleVoiceCommand(rawTranscript) {
+            const text = rawTranscript.trim();
+            if (!text) return;
+            const lower = text.toLowerCase();
+
+            // Stop / stay
+            if (lower.includes('stop tour') || lower.includes('stop the tour') || lower.includes('stay here') || lower.includes('stop here')) {
+                stopAutoTour();
+                sayLine('Okay, we will stay right here. What would you like to talk about?');
+                return;
+            }
+
+            // "Show us around" — zero-button guided tour across the places
+            if (lower.includes('show us around') || lower.includes("don't know") || lower.includes('show me around') || lower.includes('guided tour')) {
+                if (!state.isTourActive) startAutoTour();
+                return;
+            }
+
+            stopAutoTour();
+
+            // Muse avatar vocal customization
+            if (lower.includes('gold') || lower.includes('solar') || lower.includes('warm')) {
+                applyMusePreset('solar', 'I shifted into a warm gold look through Muse.');
+                return;
+            }
+            if (lower.includes('cyan') || lower.includes('cyber') || lower.includes('sleek')) {
+                applyMusePreset('cyber', 'I switched to a sleek cyan look through Muse.');
+                return;
+            }
+            if (lower.includes('emerald') || lower.includes('green')) {
+                applyMusePreset('emerald', 'I shifted into an emerald look.');
+                return;
+            }
+            if (lower.includes('our brand') || lower.includes('push brand') || lower.includes('brand avatar') || lower.includes('reset avatar')) {
+                applyMusePreset('brand', 'Back to our Godworld.org brand look.');
+                return;
+            }
+
+            // Planet ground-truth line
+            if (lower.includes('planet') || lower.includes('earth') || lower.includes('living here')) {
+                sayLine("The planet is the ground truth underneath us—we never leave it. Talking to me just moves us between places on it.");
+                return;
+            }
+
+            // Clear home commands only
+            if (lower.includes('take me home') || lower.includes('back to godworld home') || lower.includes('go home') || lower.includes('flagship')) {
+                selectPlace('flagship', 'voice');
+                return;
+            }
+
+            // Place destinations: network nodes, then businesses by name/keyword
+            for (const domain of DOMAINS) {
+                if (domain.id === 'flagship') continue;
+                const matchesName = lower.includes(domain.name.toLowerCase());
+                const matchesKeyword = domain.keywords.some(kw => lower.includes(kw));
+                if (matchesName || matchesKeyword) {
+                    selectPlace(domain.id, 'voice');
+                    return;
+                }
+            }
+
+            // Everything else is an open-ended question for the verified brain
+            askVerifiedBrain(text);
+        }
+
+        // --- 10. GESTURE-GATED CONTINUOUS VOICE (no Enable-Voice button) ---
+        function initContinuousVoice() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                setStatusLine('GODWORLD.ORG • VOICE UNAVAILABLE IN THIS BROWSER — DWELL ON A PIN TO MOVE');
+                return;
+            }
+            if (state.recognition) return;
+
+            try {
+                const recognition = new SpeechRecognition();
+                recognition.lang = 'en-US';
+                recognition.continuous = false;
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+
+                recognition.onresult = (event) => {
+                    const last = event.results[event.results.length - 1];
+                    if (last && last[0]) {
+                        handleVoiceCommand(last[0].transcript);
+                    }
+                };
+
+                recognition.onerror = () => {
+                    // Transient speech errors restart cleanly via onend
+                };
+
+                recognition.onend = () => {
+                    if (!state.shouldListen) return;
+                    setTimeout(() => {
+                        try { recognition.start(); } catch (err) { /* already started */ }
+                    }, 350);
+                };
+
+                state.recognition = recognition;
+                state.shouldListen = true;
+                recognition.start();
+                setStatusLine('GODWORLD.ORG • VOICE READY • TALK TO MOVE');
+            } catch (err) {
+                setStatusLine('GODWORLD.ORG • TAP SCREEN TO ENABLE MICROPHONE');
+            }
+        }
+
+        function unlockOnFirstGesture() {
+            if (state.hasInteracted) return;
+            state.hasInteracted = true;
+            initContinuousVoice();
+            // Prime speech synthesis inside the gesture so later lines can speak
+            if ('speechSynthesis' in window) {
+                try { window.speechSynthesis.getVoices(); } catch (e) { /* no-op */ }
+            }
+        }
+
+        // --- INITIALIZATION ---
+        window.addEventListener('DOMContentLoaded', () => {
+            initGrid();
+            requestAnimationFrame(animateGrid);
+            const home = DOMAINS[0];
+            setSpokenLine(home.guidePitch);
+            setStatusLine('GODWORLD.ORG • PLANET GROUND TRUTH • OPEN WORLD');
+        });
+    </script>
+</body>
+</html>
