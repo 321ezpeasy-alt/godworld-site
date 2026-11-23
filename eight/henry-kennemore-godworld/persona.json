@@ -12,7 +12,7 @@
     "note": "Henry's digital twin; answers on a brain that drafts, then truth-checks against verified evidence before speaking."
   },
   "avatar": {
-    "treatment": "theTruth AI \u2014 Henry's own avatar (linen portrait)",
+    "treatment": "theTruth AI \u2014 Henry's own avatar (black suit portrait)",
     "asset": "embedded in index.html as a data URI (master: assets/avatar-linen.webp)"
   },
   "verifiedFacts": [
