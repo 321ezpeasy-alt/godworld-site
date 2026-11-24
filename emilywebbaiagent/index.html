@@ -53,6 +53,18 @@
     0%, 100% { filter: drop-shadow(0 10px 30px rgba(0,0,0,.35)) brightness(1); }
     50% { filter: drop-shadow(0 10px 34px rgba(120,90,20,.45)) brightness(1.05); }
   }
+  /* Floating chat head (2026-11-24 fix): a small round bubble fixed to the
+     corner of the page that always carries Emily's face. The script below
+     sets its image from the portrait element's own src, so the bubble shows
+     the exact same approved portrait bytes — never a copy or a new picture. */
+  #chatHead {
+    position:fixed; right:16px; bottom:16px; z-index:60;
+    width:68px; height:68px; border-radius:50%;
+    object-fit:cover; object-position:50% 22%;
+    border:2px solid rgba(255,255,255,.9);
+    box-shadow:0 8px 24px rgba(20,32,46,.4);
+    background:#24344a; cursor:pointer;
+  }
   .nametag {
     display:inline-block;
     margin-top:-16px; position:relative; z-index:6;
@@ -134,6 +146,8 @@
       </div>
     </div>
   </main>
+
+  <img id="chatHead" alt="Emily" title="Emily">
 
 <script>
 'use strict';
@@ -305,6 +319,16 @@ function routeMessage(text, fromVoice) {
 }
 
 const avatarEl = document.getElementById('avatar');
+
+// Floating chat head: the bubble shows the portrait element's own image
+// (the same data URI, therefore the same approved portrait bytes).
+const chatHeadEl = document.getElementById('chatHead');
+if (chatHeadEl && avatarEl) {
+  chatHeadEl.src = avatarEl.src;
+  chatHeadEl.addEventListener('click', () => {
+    document.getElementById('conversation').scrollIntoView({ behavior: 'smooth' });
+  });
+}
 const statusEl = document.getElementById('statusLine');
 const chatLog = document.getElementById('chatLog');
 const talkBtn = document.getElementById('talkBtn');
